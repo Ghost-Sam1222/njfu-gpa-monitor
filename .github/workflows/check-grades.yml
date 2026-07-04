@@ -1,0 +1,86 @@
+name: Check NJFU Grades
+
+on:
+  schedule:
+    # 10:30, 16:30, 22:30 Asia/Shanghai. GitHub cron uses UTC.
+    - cron: "30 2,8,14 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Preflight
+        id: preflight
+        env:
+          MONITOR_ENABLED: ${{ vars.MONITOR_ENABLED || 'true' }}
+          MONITOR_UNTIL: ${{ vars.MONITOR_UNTIL }}
+          CHECK_START_DATE: ${{ vars.CHECK_START_DATE }}
+        run: |
+          if [ "$MONITOR_ENABLED" != "true" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          today="$(TZ=Asia/Shanghai date +%F)"
+          if [ -n "$CHECK_START_DATE" ] && [ "$today" \< "$CHECK_START_DATE" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$MONITOR_UNTIL" ] && [ "$today" \> "$MONITOR_UNTIL" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -f data/grade_state.json ] && grep -q '"complete": true' data/grade_state.json; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        if: steps.preflight.outputs.should_run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        if: steps.preflight.outputs.should_run == 'true'
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install chromium
+
+      - name: Check grades
+        if: steps.preflight.outputs.should_run == 'true'
+        env:
+          JW_BASE_URL: ${{ vars.JW_BASE_URL || 'https://jwxt.njfu.edu.cn' }}
+          JW_USERNAME: ${{ secrets.JW_USERNAME }}
+          JW_PASSWORD: ${{ secrets.JW_PASSWORD }}
+          JW_SEMESTER: ${{ vars.JW_SEMESTER }}
+          BARK_SERVER: ${{ secrets.BARK_SERVER || 'https://api.day.app' }}
+          BARK_DEVICE_KEY: ${{ secrets.BARK_DEVICE_KEY }}
+          BARK_GROUP: ${{ vars.BARK_GROUP || 'njfu GPA' }}
+          BARK_SOUND: ${{ vars.BARK_SOUND || 'alarm' }}
+          BARK_ICON: ${{ vars.BARK_ICON }}
+          MONITOR_ENABLED: ${{ vars.MONITOR_ENABLED || 'true' }}
+          MONITOR_UNTIL: ${{ vars.MONITOR_UNTIL }}
+          CHECK_START_DATE: ${{ vars.CHECK_START_DATE }}
+          EXPECTED_COURSE_NAMES: ${{ vars.EXPECTED_COURSE_NAMES }}
+          EXPECTED_NEW_COUNT: ${{ vars.EXPECTED_NEW_COUNT || '0' }}
+          NOTIFY_ON_FIRST_RUN: ${{ vars.NOTIFY_ON_FIRST_RUN || 'false' }}
+          GRADE_STATE_SALT: ${{ secrets.GRADE_STATE_SALT }}
+        run: python scripts/check_grades.py
+
+      - name: Commit state
+        if: steps.preflight.outputs.should_run == 'true'
+        run: |
+          test -f data/grade_state.json || exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f data/grade_state.json
+          git diff --cached --quiet || git commit -m "update grade state"
+          git push
