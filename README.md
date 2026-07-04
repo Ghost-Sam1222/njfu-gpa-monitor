@@ -54,7 +54,7 @@ Bark receives the notification content, including course names and scores. Use a
 | `EXPECTED_NEW_COUNT` | `9` | Optional completion rule |
 | `BARK_GROUP` | `NJFU-GPA` | Bark category; avoid spaces for stable grouping |
 | `BARK_SOUND` | `telegraph` | Bark sound |
-| `BARK_ICON` | raw image URL | Optional notification icon |
+| `BARK_ICON` | raw PNG URL | Optional notification icon |
 | `NOTIFY_ON_FIRST_RUN` | `false` | Avoid noisy first baseline |
 
 ## Schedule
@@ -94,8 +94,10 @@ python -m py_compile scripts/check_grades.py
 
 ## Bark Icon
 
-This repository includes `assets/njfu-gpa-icon.png`. After pushing, set `BARK_ICON` to a raw GitHub URL like:
+This repository includes `assets/njfu-gpa-icon.png`. For this demo, the public reusable icon URL is:
 
 ```text
-https://raw.githubusercontent.com/<owner>/<repo>/main/assets/njfu-gpa-icon.png
+https://raw.githubusercontent.com/Ghost-Sam1222/bark-icons/main/njfu-gpa-icon.png
 ```
+
+Forks can keep that URL, or replace it with their own public PNG URL.

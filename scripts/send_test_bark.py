@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import os
 import sys
-from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+
+from bark_notify import BarkConfig, BarkError, describe_config, send_bark
 
 
 def env(name: str, default: str = "") -> str:
@@ -21,22 +21,20 @@ def main() -> int:
 
     title = env("BARK_TEST_TITLE", "NJFU GPA 测试通知")
     body = env("BARK_TEST_BODY", "Bark 推送链路正常，后续出分会发送到这个分组。")
-    params = {
-        "group": env("BARK_GROUP", "NJFU-GPA"),
-        "sound": env("BARK_SOUND", "telegraph"),
-        "level": "timeSensitive",
-    }
-    icon = env("BARK_ICON")
-    if icon:
-        params["icon"] = icon
+    config = BarkConfig(
+        server=server,
+        device_key=device_key,
+        group=env("BARK_GROUP", "NJFU-GPA"),
+        sound=env("BARK_SOUND", "telegraph"),
+        icon=env("BARK_ICON"),
+    )
 
-    url = f"{server}/{quote(device_key)}/{quote(title)}/{quote(body)}?{urlencode(params)}"
-    request = Request(url, headers={"User-Agent": "njfu-gpa-monitor/1.0"})
-    with urlopen(request, timeout=20) as response:
-        if response.status >= 400:
-            print(f"error: Bark returned HTTP {response.status}.", file=sys.stderr)
-            return 1
-        response.read()
+    print(f"Bark options: {describe_config(config)}")
+    try:
+        send_bark(config, title, body)
+    except BarkError as exc:
+        print(f"error: Bark push failed: {exc}", file=sys.stderr)
+        return 1
     print("Bark test notification sent.")
     return 0
 

@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import quote
+
+from bark_notify import BarkConfig, BarkError, describe_config, send_bark
 
 DEFAULT_BASE_URL = "https://jwxt.njfu.edu.cn"
 DEFAULT_STATE_PATH = Path("data/grade_state.json")
@@ -252,19 +253,18 @@ def is_complete(settings: Settings, grades: list[dict[str, str]]) -> bool:
 
 
 def bark_push(settings: Settings, title: str, body: str) -> None:
-    import requests
-
-    url = f"{settings.bark_server}/{quote(settings.bark_device_key)}/{quote(title)}/{quote(body)}"
-    params = {
-        "group": settings.bark_group,
-        "sound": settings.bark_sound,
-        "level": "timeSensitive",
-    }
-    if settings.bark_icon:
-        params["icon"] = settings.bark_icon
-    response = requests.get(url, params=params, timeout=20)
-    if response.status_code >= 400:
-        raise MonitorError(f"Bark push failed: HTTP {response.status_code} {response.text[:200]}")
+    config = BarkConfig(
+        server=settings.bark_server,
+        device_key=settings.bark_device_key,
+        group=settings.bark_group,
+        sound=settings.bark_sound,
+        icon=settings.bark_icon,
+    )
+    print(f"Bark options: {describe_config(config)}")
+    try:
+        send_bark(config, title, body)
+    except BarkError as exc:
+        raise MonitorError(f"Bark push failed: {exc}") from exc
 
 
 def format_grade(grade: dict[str, str]) -> str:
