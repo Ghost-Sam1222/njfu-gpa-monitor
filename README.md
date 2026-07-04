@@ -52,8 +52,8 @@ Bark receives the notification content, including course names and scores. Use a
 | `MONITOR_UNTIL` | `2026-07-15` | Hard stop date |
 | `EXPECTED_COURSE_NAMES` | `课程A,课程B` | Optional completion rule |
 | `EXPECTED_NEW_COUNT` | `9` | Optional completion rule |
-| `BARK_GROUP` | `njfu GPA` | Bark category |
-| `BARK_SOUND` | `alarm` | Bark sound |
+| `BARK_GROUP` | `NJFU-GPA` | Bark category; avoid spaces for stable grouping |
+| `BARK_SOUND` | `telegraph` | Bark sound |
 | `BARK_ICON` | raw image URL | Optional notification icon |
 | `NOTIFY_ON_FIRST_RUN` | `false` | Avoid noisy first baseline |
 

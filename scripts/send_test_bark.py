@@ -22,8 +22,8 @@ def main() -> int:
     title = env("BARK_TEST_TITLE", "NJFU GPA 测试通知")
     body = env("BARK_TEST_BODY", "Bark 推送链路正常，后续出分会发送到这个分组。")
     params = {
-        "group": env("BARK_GROUP", "njfu GPA"),
-        "sound": env("BARK_SOUND", "alarm"),
+        "group": env("BARK_GROUP", "NJFU-GPA"),
+        "sound": env("BARK_SOUND", "telegraph"),
         "level": "timeSensitive",
     }
     icon = env("BARK_ICON")

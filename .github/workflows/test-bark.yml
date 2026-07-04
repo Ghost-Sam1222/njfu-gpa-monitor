@@ -17,8 +17,8 @@ jobs:
         env:
           BARK_SERVER: ${{ secrets.BARK_SERVER || 'https://api.day.app' }}
           BARK_DEVICE_KEY: ${{ secrets.BARK_DEVICE_KEY }}
-          BARK_GROUP: ${{ vars.BARK_GROUP || 'njfu GPA' }}
-          BARK_SOUND: ${{ vars.BARK_SOUND || 'alarm' }}
+          BARK_GROUP: ${{ vars.BARK_GROUP || 'NJFU-GPA' }}
+          BARK_SOUND: ${{ vars.BARK_SOUND || 'telegraph' }}
           BARK_ICON: ${{ vars.BARK_ICON }}
           BARK_TEST_TITLE: NJFU GPA 测试通知
           BARK_TEST_BODY: Bark 推送链路正常，后续出分会发送到这个分组。
