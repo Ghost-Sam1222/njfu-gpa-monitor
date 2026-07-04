@@ -89,7 +89,7 @@ python scripts/check_grades.py
 Syntax check:
 
 ```bash
-python -m py_compile scripts/check_grades.py
+python -m py_compile scripts/*.py
 ```
 
 ## Bark Icon

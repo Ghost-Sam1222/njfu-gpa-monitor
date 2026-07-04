@@ -24,7 +24,8 @@ class BarkConfig:
 
 
 def describe_config(config: BarkConfig) -> str:
-    host = urlparse(config.server).netloc or config.server
+    parsed = urlparse(config.server)
+    host = parsed.hostname or "set"
     return (
         f"server={host} "
         f"group={config.group or 'unset'} "
@@ -62,16 +63,16 @@ def send_bark(config: BarkConfig, title: str, body: str) -> None:
         with urlopen(request, timeout=20) as response:
             response_body = response.read().decode("utf-8", errors="replace")
             if response.status >= 400:
-                raise BarkError(f"HTTP {response.status}: {response_body[:200]}")
+                raise BarkError(f"HTTP {response.status}")
     except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise BarkError(f"HTTP {exc.code}: {detail[:200]}") from exc
+        raise BarkError(f"HTTP {exc.code}") from exc
     except URLError as exc:
         raise BarkError(str(exc.reason)) from exc
 
     try:
         result = json.loads(response_body)
     except json.JSONDecodeError:
-        return
+        raise BarkError("Bark returned a non-JSON response")
     if str(result.get("code", "200")) != "200":
-        raise BarkError(response_body[:200])
+        message = result.get("message") or result.get("error") or "Bark rejected the push"
+        raise BarkError(str(message)[:120])
