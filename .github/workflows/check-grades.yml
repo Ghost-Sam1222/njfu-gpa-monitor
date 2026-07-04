@@ -7,7 +7,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  actions: write
+  contents: read
 
 jobs:
   check:
@@ -16,10 +17,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Restore grade state
+        uses: actions/cache/restore@v4
+        with:
+          path: data/grade_state.json
+          key: grade-state-${{ github.run_id }}
+          restore-keys: |
+            grade-state-
+
       - name: Preflight
         id: preflight
         env:
-          MONITOR_ENABLED: ${{ vars.MONITOR_ENABLED || 'true' }}
+          MONITOR_ENABLED: ${{ vars.MONITOR_ENABLED || 'false' }}
           MONITOR_UNTIL: ${{ vars.MONITOR_UNTIL }}
           CHECK_START_DATE: ${{ vars.CHECK_START_DATE }}
         run: |
@@ -66,7 +75,7 @@ jobs:
           BARK_GROUP: ${{ vars.BARK_GROUP || 'njfu GPA' }}
           BARK_SOUND: ${{ vars.BARK_SOUND || 'alarm' }}
           BARK_ICON: ${{ vars.BARK_ICON }}
-          MONITOR_ENABLED: ${{ vars.MONITOR_ENABLED || 'true' }}
+          MONITOR_ENABLED: ${{ vars.MONITOR_ENABLED || 'false' }}
           MONITOR_UNTIL: ${{ vars.MONITOR_UNTIL }}
           CHECK_START_DATE: ${{ vars.CHECK_START_DATE }}
           EXPECTED_COURSE_NAMES: ${{ vars.EXPECTED_COURSE_NAMES }}
@@ -75,12 +84,9 @@ jobs:
           GRADE_STATE_SALT: ${{ secrets.GRADE_STATE_SALT }}
         run: python scripts/check_grades.py
 
-      - name: Commit state
+      - name: Save grade state
         if: steps.preflight.outputs.should_run == 'true'
-        run: |
-          test -f data/grade_state.json || exit 0
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f data/grade_state.json
-          git diff --cached --quiet || git commit -m "update grade state"
-          git push
+        uses: actions/cache/save@v4
+        with:
+          path: data/grade_state.json
+          key: grade-state-${{ github.run_id }}

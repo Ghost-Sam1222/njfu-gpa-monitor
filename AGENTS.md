@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository contains a small Python monitor plus one GitHub Actions workflow. Main logic lives in `scripts/check_grades.py`. Runtime state is written to `data/grade_state.json` by the workflow; keep `data/.gitkeep` so the directory exists. Notification artwork lives in `assets/`. Automation is configured in `.github/workflows/check-grades.yml`. Use `.env.example` as the local configuration template; never commit a real `.env`.
+This repository contains a small Python monitor plus GitHub Actions workflows. Main logic lives in `scripts/check_grades.py`; Bark smoke tests live in `scripts/send_test_bark.py`. Runtime state is restored from and saved to GitHub Actions cache at `data/grade_state.json`; keep `data/.gitkeep` so the directory exists. Notification artwork lives in `assets/`. Automation is configured in `.github/workflows/`. Use `.env.example` as the local configuration template; never commit a real `.env`.
 
 ## Build, Test, and Development Commands
 
@@ -41,4 +41,4 @@ Use short, imperative commit messages, for example `add grade monitor` or `updat
 
 ## Security & Configuration Tips
 
-Required private values belong in GitHub Actions Secrets: `JW_USERNAME`, `JW_PASSWORD`, `BARK_DEVICE_KEY`, and `GRADE_STATE_SALT`. Public Variables may contain term dates, expected course names, and Bark display settings. The state file must store only salted hashes and counts, not raw grades.
+Required private values belong in GitHub Actions Secrets: `JW_USERNAME`, `JW_PASSWORD`, `BARK_DEVICE_KEY`, and `GRADE_STATE_SALT`. Public Variables may contain term dates, expected course names, and Bark display settings. The cached state file must store only salted hashes and counts, not raw grades, and must not be committed to git.

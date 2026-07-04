@@ -1,6 +1,6 @@
 # NJFU GPA Monitor
 
-Low-frequency GitHub Actions monitor for 南京林业大学教务系统出分提醒. It logs in to JWXT, checks the grade table, compares a privacy-preserving state file, and sends Bark notifications only when new grades appear.
+Low-frequency GitHub Actions monitor for 南京林业大学教务系统出分提醒. It logs in to JWXT, checks the grade table, compares privacy-preserving cached state, and sends Bark notifications only when new grades appear.
 
 This repository is designed to be reusable: fork it, set your own GitHub Secrets and Variables, then enable the workflow during exam week.
 
@@ -10,12 +10,12 @@ This repository is designed to be reusable: fork it, set your own GitHub Secrets
 - Playwright logs in to `jwxt.njfu.edu.cn` with credentials stored in GitHub Secrets.
 - The script reads the grade table from `jsxsd/kscj/cjcx_list`.
 - New grade rows are detected by salted SHA-256 hashes.
-- Bark receives the actual course name and score; GitHub state stores only hashes and counts.
+- Bark receives the actual course name and score; cached state stores only hashes and counts.
 - Monitoring stops after `MONITOR_UNTIL`, `MONITOR_ENABLED=false`, or completion rules are satisfied.
 
 ## Privacy Model
 
-Never commit `.env`, passwords, Bark keys, or screenshots with personal data. The committed state file contains:
+Never commit `.env`, passwords, Bark keys, or screenshots with personal data. Runtime state is stored in GitHub Actions cache, not in git history. The cached state contains:
 
 - update time
 - semester
@@ -23,7 +23,7 @@ Never commit `.env`, passwords, Bark keys, or screenshots with personal data. Th
 - salted hashes
 - completion flag
 
-It does not store course names, scores, GPA values, credentials, or Bark device keys. It can still reveal metadata such as check time, semester, known grade count, and whether all expected grades have arrived. Code templates can be public, but a real monitor repository is safer as private.
+It does not store course names, scores, GPA values, credentials, or Bark device keys. It can still reveal metadata to repository maintainers such as check time, semester, known grade count, and whether all expected grades have arrived.
 
 Bark receives the notification content, including course names and scores. Use a Bark server you trust.
 
@@ -47,7 +47,7 @@ Bark receives the notification content, including course names and scores. Use a
 | --- | --- | --- |
 | `JW_BASE_URL` | `https://jwxt.njfu.edu.cn` | Usually unchanged |
 | `JW_SEMESTER` | `2025-2026-2` | Academic term |
-| `MONITOR_ENABLED` | `true` | Set `false` after use |
+| `MONITOR_ENABLED` | `true` | Required to enable scheduled checks |
 | `CHECK_START_DATE` | `2026-06-22` | First day to start checking |
 | `MONITOR_UNTIL` | `2026-07-15` | Hard stop date |
 | `EXPECTED_COURSE_NAMES` | `课程A,课程B` | Optional completion rule |
@@ -68,6 +68,12 @@ cron: "30 2,8,14 * * *"
 That is 10:30, 16:30, and 22:30 in Asia/Shanghai. Edit `.github/workflows/check-grades.yml` if you want lower frequency.
 
 The workflow has a preflight guard. If `MONITOR_ENABLED=false`, today is before `CHECK_START_DATE`, today is after `MONITOR_UNTIL`, or `data/grade_state.json` is already complete, it exits before installing Python dependencies and Playwright.
+
+New forks are disabled by default because `MONITOR_ENABLED` defaults to `false` in the workflow. Set the repository Variable to `true` only during the exam period.
+
+## Test Bark
+
+After configuring Secrets and Variables, run `Test Bark Notification` from the Actions tab. It sends one manual test notification and does not log in to JWXT.
 
 ## Local Development
 
