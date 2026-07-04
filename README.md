@@ -54,7 +54,7 @@ Bark receives the notification content, including course names and scores. Use a
 | `EXPECTED_NEW_COUNT` | `9` | Optional completion rule |
 | `BARK_GROUP` | `NJFU-GPA` | Bark category; avoid spaces for stable grouping |
 | `BARK_SOUND` | `telegraph` | Bark sound |
-| `BARK_ICON` | raw PNG URL | Optional notification icon |
+| `BARK_ICON` | `https://cdn.jsdelivr.net/gh/Ghost-Sam1222/bark-icons@main/njfu-gpa-icon.png` | Optional notification icon; GitHub raw URLs are converted to jsDelivr automatically |
 | `NOTIFY_ON_FIRST_RUN` | `false` | Avoid noisy first baseline |
 
 ## Schedule

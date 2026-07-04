@@ -34,6 +34,19 @@ def describe_config(config: BarkConfig) -> str:
     )
 
 
+def normalize_icon_url(icon: str) -> str:
+    parsed = urlparse(icon)
+    if parsed.hostname != "raw.githubusercontent.com":
+        return icon
+
+    parts = parsed.path.lstrip("/").split("/", 3)
+    if len(parts) != 4:
+        return icon
+
+    owner, repo, ref, path = parts
+    return f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{ref}/{path}"
+
+
 def send_bark(config: BarkConfig, title: str, body: str) -> None:
     payload = {
         "device_key": config.device_key,
@@ -46,7 +59,7 @@ def send_bark(config: BarkConfig, title: str, body: str) -> None:
     if config.sound:
         payload["sound"] = config.sound
     if config.icon:
-        payload["icon"] = config.icon
+        payload["icon"] = normalize_icon_url(config.icon)
     if config.archive:
         payload["isArchive"] = "1"
 
