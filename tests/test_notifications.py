@@ -36,6 +36,10 @@ class NotificationTests(unittest.TestCase):
             with self.assertRaisesRegex(NotificationError, "TimeoutError"):
                 _request("https://example.com/private-token", payload={"message": "private"})
 
+    def test_rejects_plain_http_notification_endpoints(self) -> None:
+        settings = NotificationSettings(generic_webhook_url="http://example.com/hook")
+        self.assertEqual(settings.configuration_errors(), ("GENERIC_WEBHOOK_URL must use HTTPS",))
+
 
 if __name__ == "__main__":
     unittest.main()

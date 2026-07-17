@@ -1,0 +1,46 @@
+name: Sync Upstream Fixes
+
+on:
+  schedule:
+    - cron: "19 4 * * 3"
+  workflow_dispatch:
+
+concurrency:
+  group: njfu-upstream-sync-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: vars.AUTO_UPDATE_ENABLED != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout personal monitor
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Download trusted upstream
+        run: git clone --depth 1 https://github.com/Ghost-Sam1222/njfu-gpa-monitor.git /tmp/njfu-gpa-upstream
+
+      - name: Replace public project files
+        run: |
+          paths=(.devcontainer .github/workflows assets docs scripts setup tests .env.example .gitignore AGENTS.md LICENSE README.md requirements.txt setup-linux.sh setup-macos.command setup-windows.bat)
+          for path in "${paths[@]}"; do
+            rm -rf "$path"
+            cp -R "/tmp/njfu-gpa-upstream/$path" "$path"
+          done
+
+      - name: Commit updates
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          git commit -m "chore: sync upstream fixes"
+          git push

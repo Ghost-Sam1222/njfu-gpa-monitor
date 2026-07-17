@@ -23,13 +23,13 @@ def normalized_name(value: str) -> str:
 
 
 def is_complete(settings: Settings, grades: list[Grade]) -> bool:
-    if settings.expected_course_names:
+    if settings.completion_mode == "names":
         names = {normalized_name(grade.course_name) for grade in grades}
         expected = {normalized_name(name) for name in settings.expected_course_names}
         return expected.issubset(names)
-    if settings.expected_grade_count > 0:
+    if settings.completion_mode == "count":
         return len(grades) >= settings.expected_grade_count
-    return False
+    return bool(settings.monitor_until and date.today() >= settings.monitor_until)
 
 
 def should_skip(settings: Settings, state: MonitorState) -> bool:
@@ -42,9 +42,6 @@ def should_skip(settings: Settings, state: MonitorState) -> bool:
         return True
     if settings.monitor_until and today > settings.monitor_until:
         print("Monitor has passed its stop date.")
-        return True
-    if state.complete:
-        print("Expected grades are complete; login skipped.")
         return True
     return False
 
@@ -63,9 +60,10 @@ def format_grades(grades: list[Grade], average_gpa: float | None = None) -> str:
     return "\n".join(lines)
 
 
-def completion_summary(grades: list[Grade]) -> str:
+def completion_summary(settings: Settings, grades: list[Grade]) -> str:
     average_gpa = weighted_average(grades, "gpa")
-    parts = ["本学期成绩已全部到齐。"]
+    message = "已到设定的监控截止日期。" if settings.completion_mode == "date" else "本学期成绩已全部到齐。"
+    parts = [message]
     if average_gpa is not None:
         parts.append(f"平均绩点：{average_gpa:.2f}")
     return "\n".join(parts)
@@ -110,7 +108,7 @@ def deliver_realtime(
                     settings.notifications,
                     channel,
                     "NJFU GPA 成绩已齐",
-                    completion_summary(all_grades),
+                    completion_summary(settings, all_grades),
                 )
                 delivered.add(completion_marker)
             except NotificationError as exc:
@@ -142,7 +140,7 @@ def deliver_email(
     subject = f"NJFU {settings.semester} {'最终成绩单' if final_due else '成绩更新'}"
     try:
         html = write_transcript(settings.report_path, grades, settings.semester, settings.username)
-        send_email(settings.notifications, subject, completion_summary(grades), html)
+        send_email(settings.notifications, subject, completion_summary(settings, grades), html)
     except NotificationError as exc:
         return [f"email: {exc}"]
     except OSError as exc:
@@ -151,6 +149,21 @@ def deliver_email(
     if final_due:
         delivered.add(completion_marker)
     return []
+
+
+def deliver_health_alert(settings: Settings, count: int) -> None:
+    title = "NJFU GPA 监控需要处理"
+    body = f"已连续 {count} 次无法读取教务系统。请重新打开设置页验证登录；通知中未包含课程或成绩。"
+    for channel in settings.notifications.realtime_channels():
+        try:
+            send_channel(settings.notifications, channel, title, body)
+        except NotificationError:
+            print(f"Health alert failed: channel={channel}.", file=sys.stderr)
+    if settings.notifications.email_enabled():
+        try:
+            send_email(settings.notifications, title, body, f"<p>{body}</p>")
+        except NotificationError:
+            print("Health alert failed: channel=email.", file=sys.stderr)
 
 
 def run() -> None:
@@ -162,7 +175,15 @@ def run() -> None:
     if not channels and not settings.notifications.email_enabled():
         raise MonitorError("Configure at least one notification channel.")
 
-    grades = asyncio.run(fetch_grades(settings))
+    try:
+        grades = asyncio.run(fetch_grades(settings))
+    except GradeSourceError:
+        state.consecutive_failures += 1
+        if state.consecutive_failures in {3, 6}:
+            deliver_health_alert(settings, state.consecutive_failures)
+        save_state(settings.state_path, state)
+        raise
+    state.consecutive_failures = 0
     grades_by_hash = {grade.identity(settings.state_salt): grade for grade in grades}
     current_hashes = set(grades_by_hash)
     detected_complete = is_complete(settings, grades)

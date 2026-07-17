@@ -12,7 +12,7 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 from bark_notify import BarkConfig, BarkError, send_bark
@@ -116,6 +116,18 @@ class NotificationSettings:
             errors.append("NTFY_TOKEN requires NTFY_TOPIC")
         if self.generic_webhook_template and not self.generic_webhook_url:
             errors.append("GENERIC_WEBHOOK_TEMPLATE requires GENERIC_WEBHOOK_URL")
+        endpoints = {
+            "BARK_SERVER": self.bark_server if self.bark_device_key else "",
+            "FEISHU_WEBHOOK_URL": self.feishu_webhook_url,
+            "DINGTALK_WEBHOOK_URL": self.dingtalk_webhook_url,
+            "WEWORK_WEBHOOK_URL": self.wework_webhook_url,
+            "NTFY_SERVER_URL": self.ntfy_server_url if self.ntfy_topic else "",
+            "SLACK_WEBHOOK_URL": self.slack_webhook_url,
+            "GENERIC_WEBHOOK_URL": self.generic_webhook_url,
+        }
+        for name, value in endpoints.items():
+            if value and urlparse(value).scheme.lower() != "https":
+                errors.append(f"{name} must use HTTPS")
         return tuple(errors)
 
 

@@ -16,6 +16,7 @@ class MonitorState:
     delivered_by_channel: dict[str, set[str]] = field(default_factory=dict)
     email_pending_count: int = 0
     complete: bool = False
+    consecutive_failures: int = 0
 
     def delivered(self, channel: str) -> set[str]:
         return self.delivered_by_channel.setdefault(channel, set())
@@ -45,6 +46,7 @@ def load_state(path: Path, semester: str) -> MonitorState:
         delivered_by_channel=delivered,
         email_pending_count=int(raw.get("email_pending_count", 0)),
         complete=bool(raw.get("complete", False)),
+        consecutive_failures=int(raw.get("consecutive_failures", 0)),
     )
 
 
@@ -61,6 +63,7 @@ def save_state(path: Path, state: MonitorState) -> None:
         },
         "email_pending_count": state.email_pending_count,
         "complete": state.complete,
+        "consecutive_failures": state.consecutive_failures,
     }
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

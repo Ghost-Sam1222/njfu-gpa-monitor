@@ -78,6 +78,7 @@ class Settings:
     check_start_date: date | None
     expected_course_names: tuple[str, ...]
     expected_grade_count: int
+    completion_mode: str
     notify_on_first_run: bool
     email_batch_size: int
     final_report_enabled: bool
@@ -109,17 +110,30 @@ def load_settings() -> Settings:
     notification_errors = notifications.configuration_errors()
     if notification_errors:
         raise ConfigError("; ".join(notification_errors))
+    enabled = parse_bool(env("MONITOR_ENABLED", "true"), True)
+    monitor_until = parse_date(env("MONITOR_UNTIL"))
+    completion_mode = env("COMPLETION_MODE", "count")
+    expected_course_names = parse_csv(env("EXPECTED_COURSE_NAMES"))
+    if completion_mode not in {"count", "names", "date"}:
+        raise ConfigError("COMPLETION_MODE must be count, names, or date.")
+    if enabled and monitor_until is None:
+        raise ConfigError("MONITOR_UNTIL is required while monitoring is enabled.")
+    if completion_mode == "count" and expected_count < 1:
+        raise ConfigError("EXPECTED_GRADE_COUNT must be at least 1 in count mode.")
+    if completion_mode == "names" and not expected_course_names:
+        raise ConfigError("EXPECTED_COURSE_NAMES is required in names mode.")
     return Settings(
         base_url=env("JW_BASE_URL", DEFAULT_BASE_URL).rstrip("/"),
         username=username,
         password=password,
         cookie=cookie,
         semester=env("JW_SEMESTER", infer_semester(date.today())),
-        enabled=parse_bool(env("MONITOR_ENABLED", "true"), True),
-        monitor_until=parse_date(env("MONITOR_UNTIL")),
+        enabled=enabled,
+        monitor_until=monitor_until,
         check_start_date=parse_date(env("CHECK_START_DATE")),
-        expected_course_names=parse_csv(env("EXPECTED_COURSE_NAMES")),
+        expected_course_names=expected_course_names,
         expected_grade_count=expected_count,
+        completion_mode=completion_mode,
         notify_on_first_run=parse_bool(env("NOTIFY_ON_FIRST_RUN"), False),
         email_batch_size=email_batch_size,
         final_report_enabled=parse_bool(env("FINAL_REPORT_ENABLED", "true"), True),

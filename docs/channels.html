@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>通知渠道选择与配置 · NJFU GPA Monitor</title>
+  <style>
+    :root{color-scheme:light dark;--bg:#f5f5f7;--surface:#fff;--text:#1d1d1f;--muted:#6e6e73;--line:#d2d2d7;--blue:#0071e3}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.65 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif;letter-spacing:0}header,main,footer{width:min(860px,100%);margin:auto;padding-left:20px;padding-right:20px}header{padding-top:40px;padding-bottom:28px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:34px;line-height:1.2}header p{margin:10px 0 0;color:var(--muted);font-size:17px}.chooser{display:grid;grid-template-columns:repeat(3,1fr);margin-top:24px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}.choice{padding:18px}.choice+.choice{border-left:1px solid var(--line)}.choice strong{display:block}.choice span{display:block;margin-top:4px;color:var(--muted);font-size:13px}section{padding:28px 0;border-bottom:1px solid var(--line)}h2{margin:0 0 8px;font-size:21px}h3{margin:22px 0 6px;font-size:16px}p{margin:8px 0;color:var(--muted)}ol{margin:10px 0 0;padding-left:22px}li+li{margin-top:7px}code{padding:2px 5px;border-radius:4px;background:var(--surface);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}a{color:var(--blue)}.warning{color:var(--text);font-weight:650}footer{padding-top:24px;padding-bottom:42px;color:var(--muted)}
+    @media(max-width:680px){header{padding-top:26px}.chooser{grid-template-columns:1fr}.choice+.choice{border-left:0;border-top:1px solid var(--line)}h1{font-size:29px}}
+    @media(prefers-color-scheme:dark){:root{--bg:#000;--surface:#1c1c1e;--text:#f5f5f7;--muted:#aeaeb2;--line:#38383a;--blue:#2997ff}}
+  </style>
+</head>
+<body>
+<header>
+  <h1>选择通知渠道</h1>
+  <p>只配置一种就能使用。这里不会要求你粘贴任何密钥，拿到凭据后再回到私有设置页填写。</p>
+  <div class="chooser">
+    <div class="choice"><strong>最通用：邮件</strong><span>所有手机和电脑都能收，QQ、163 可用。</span></div>
+    <div class="choice"><strong>Apple 设备：Bark</strong><span>通知最快、最简洁，仅适合 iPhone 和 iPad。</span></div>
+    <div class="choice"><strong>已有聊天 App</strong><span>飞书、钉钉、企业微信、Telegram、Slack。</span></div>
+  </div>
+</header>
+<main>
+  <section id="email"><h2>邮件：推荐给大多数人</h2><p class="warning">本项目只通过 SMTP 发信，不读取邮箱，不需要 IMAP。授权码不是邮箱登录密码。</p><h3>QQ 邮箱</h3><ol><li>在电脑浏览器登录 <a href="https://mail.qq.com/" target="_blank" rel="noopener noreferrer">QQ 邮箱</a>。</li><li>进入“设置 → 账号”，找到 POP3/IMAP/SMTP 服务。</li><li>开启 IMAP/SMTP 或 POP3/SMTP，按页面完成安全验证，生成 16 位授权码。</li><li>设置页填写发件邮箱、授权码和收件邮箱；SMTP 地址和端口留空即可自动识别。</li></ol><h3>163 / 126 邮箱</h3><ol><li>登录 <a href="https://mail.163.com/" target="_blank" rel="noopener noreferrer">163 邮箱</a> 或 126 邮箱。</li><li>进入“设置 → POP3/SMTP/IMAP”，开启 SMTP 服务并设置客户端授权密码。</li><li>“SMTP 授权码”填写该授权密码，不要填写网页登录密码；服务器和端口可留空。</li></ol></section>
+  <section id="bark"><h2>Bark：iPhone / iPad</h2><ol><li>从 App Store 安装 Bark 并打开。</li><li>在 App 首页复制测试地址，格式类似 <code>https://api.day.app/一串字符/...</code>。</li><li>只取 <code>api.day.app/</code> 后、下一个 <code>/</code> 前的字符，填入 Device Key；服务器保持默认。</li><li>保存后收到“NJFU GPA 测试通知”即成功。参考 <a href="https://github.com/Finb/Bark" target="_blank" rel="noopener noreferrer">Bark 官方说明</a>。</li></ol></section>
+  <section id="webhooks"><h2>飞书、钉钉、企业微信、Slack</h2><p>先建一个只负责收通知的群，再添加“自定义机器人”，最后复制 Webhook 地址。</p><ol><li>进入群设置或群管理，找到“机器人 / 群机器人”。</li><li>添加“自定义机器人”或“Incoming Webhook”，名称可填 NJFU GPA。</li><li>复制完整的 HTTPS Webhook 地址，回到设置页粘贴到对应输入框。</li><li>Webhook 相当于密码，不要发到聊天、截图或公开仓库。保存后以测试消息为准。</li></ol><p>官方步骤：<a href="https://open.feishu.cn/document/ukTMukTMukTM/ucTM5YjL3ETO24yNxkjN" target="_blank" rel="noopener noreferrer">飞书</a> · <a href="https://open.dingtalk.com/document/robots/custom-robot-access" target="_blank" rel="noopener noreferrer">钉钉</a> · <a href="https://developer.work.weixin.qq.com/document/path/91770" target="_blank" rel="noopener noreferrer">企业微信</a> · <a href="https://api.slack.com/messaging/webhooks" target="_blank" rel="noopener noreferrer">Slack</a></p></section>
+  <section id="telegram"><h2>Telegram</h2><ol><li>打开官方 <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">@BotFather</a>，发送 <code>/newbot</code>，按提示获得 Bot Token。</li><li>打开刚创建的机器人，先发送一条消息；机器人不能主动开始会话。</li><li>浏览器打开 <code>https://api.telegram.org/bot你的Token/getUpdates</code>，在返回内容中找到 <code>chat</code> 下的 <code>id</code>。</li><li>分别填写 Bot Token 和 Chat ID。两项都属于敏感信息。</li></ol><p>参考 <a href="https://core.telegram.org/bots/tutorial" target="_blank" rel="noopener noreferrer">Telegram 官方教程</a>。</p></section>
+  <section id="ntfy"><h2>ntfy</h2><ol><li>安装 ntfy App，或打开 <a href="https://ntfy.sh/app" target="_blank" rel="noopener noreferrer">ntfy 网页版</a>。</li><li>订阅一个足够随机、别人猜不到的 Topic。</li><li>保持服务器 <code>https://ntfy.sh</code>，填写同一个 Topic；公开服务器未使用账号时 Token 可留空。</li><li>Topic 可能充当访问凭据，不要使用姓名或学号，也不要公开。</li></ol></section>
+  <section id="done"><h2>怎样才算配置成功</h2><ol><li>回到私有设置页，只填写你选中的一种渠道。</li><li>保持“保存后触发一次通知测试”开启，再点“完成配置”。</li><li>必须在目标 App 或邮箱里实际收到“NJFU GPA 测试通知”；只看到网页提示“已启动”不算成功。</li><li>没收到时，删除该渠道旧配置后重新获取凭据，不要把凭据发给他人排查。</li></ol></section>
+</main>
+<footer><a href="./">返回云端配置入口</a> · 教程不收集表单或凭据。</footer>
+</body>
+</html>

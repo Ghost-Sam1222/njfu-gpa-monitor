@@ -60,7 +60,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      actions: write
       contents: read
     steps:
       - name: Checkout
@@ -80,7 +79,7 @@ jobs:
           RESET_SEMESTER: ${{ vars.JW_SEMESTER || 'auto' }}
         run: |
           mkdir -p data
-          printf '{"schema_version":2,"semester":"%s","initialized":false,"observed_hashes":[],"delivered_by_channel":{},"email_pending_count":0,"complete":false}\n' "$RESET_SEMESTER" > data/grade_state.json
+          printf '{"schema_version":2,"semester":"%s","initialized":false,"observed_hashes":[],"delivered_by_channel":{},"email_pending_count":0,"complete":false,"consecutive_failures":0}\n' "$RESET_SEMESTER" > data/grade_state.json
 
       - name: Preflight
         id: preflight
@@ -104,10 +103,6 @@ jobs:
             exit 0
           fi
           if [ -n "$MONITOR_UNTIL" ] && [ "$today" \> "$MONITOR_UNTIL" ]; then
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ -f data/grade_state.json ] && grep -q '"complete": true' data/grade_state.json; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -159,6 +154,7 @@ jobs:
           CHECK_START_DATE: ${{ vars.CHECK_START_DATE }}
           EXPECTED_COURSE_NAMES: ${{ vars.EXPECTED_COURSE_NAMES }}
           EXPECTED_GRADE_COUNT: ${{ vars.EXPECTED_GRADE_COUNT || vars.EXPECTED_NEW_COUNT || '0' }}
+          COMPLETION_MODE: ${{ vars.COMPLETION_MODE || 'count' }}
           NOTIFY_ON_FIRST_RUN: ${{ vars.NOTIFY_ON_FIRST_RUN || 'false' }}
           EMAIL_BATCH_SIZE: ${{ vars.EMAIL_BATCH_SIZE || '3' }}
           FINAL_REPORT_ENABLED: ${{ vars.FINAL_REPORT_ENABLED || 'true' }}

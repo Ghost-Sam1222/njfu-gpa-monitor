@@ -32,6 +32,13 @@ class StateTests(unittest.TestCase):
             save_state(path, state)
             self.assertEqual(load_state(path, state.semester).delivered("bark"), {"hash-a"})
 
+    def test_failure_counter_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.json"
+            state = MonitorState("2026-2027-1", consecutive_failures=3)
+            save_state(path, state)
+            self.assertEqual(load_state(path, state.semester).consecutive_failures, 3)
+
 
 if __name__ == "__main__":
     unittest.main()

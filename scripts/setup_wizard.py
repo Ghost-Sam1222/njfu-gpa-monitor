@@ -9,6 +9,7 @@ import secrets
 import shutil
 import subprocess
 import threading
+import time
 import webbrowser
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -55,13 +56,87 @@ VARIABLE_NAMES = {
     "MONITOR_UNTIL",
     "EXPECTED_COURSE_NAMES",
     "EXPECTED_GRADE_COUNT",
+    "COMPLETION_MODE",
     "NOTIFY_ON_FIRST_RUN",
     "EMAIL_BATCH_SIZE",
     "FINAL_REPORT_ENABLED",
     "BARK_GROUP",
     "BARK_SOUND",
     "BARK_ICON",
+    "AUTO_UPDATE_ENABLED",
 }
+
+
+def repository_variables(repository: str) -> dict[str, str]:
+    result = gh("variable", "list", "--repo", repository, "--json", "name,value")
+    if result.returncode != 0:
+        return {}
+    try:
+        items = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+    return {
+        str(item["name"]): str(item.get("value", ""))
+        for item in items
+        if isinstance(item, dict) and item.get("name") in VARIABLE_NAMES
+    }
+
+
+def enable_workflow_writes(repository: str) -> bool:
+    """Allow the two maintenance jobs to commit only their public files."""
+    result = gh(
+        "api",
+        "--method",
+        "PUT",
+        f"repos/{repository}/actions/permissions/workflow",
+        "-f",
+        "default_workflow_permissions=write",
+        "-F",
+        "can_approve_pull_request_reviews=false",
+    )
+    return result.returncode == 0
+
+
+def latest_workflow_run(repository: str, workflow: str) -> dict[str, object] | None:
+    result = gh(
+        "run",
+        "list",
+        "--repo",
+        repository,
+        "--workflow",
+        workflow,
+        "--event",
+        "workflow_dispatch",
+        "--limit",
+        "1",
+        "--json",
+        "databaseId,status,conclusion,url",
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        runs = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return runs[0] if isinstance(runs, list) and runs and isinstance(runs[0], dict) else None
+
+
+def wait_for_workflow(
+    repository: str,
+    workflow: str,
+    previous_id: object,
+    attempts: int = 35,
+    delay: float = 2.0,
+) -> dict[str, object] | None:
+    latest: dict[str, object] | None = None
+    for _ in range(attempts):
+        candidate = latest_workflow_run(repository, workflow)
+        if candidate and candidate.get("databaseId") != previous_id:
+            latest = candidate
+            if candidate.get("status") == "completed":
+                return candidate
+        time.sleep(delay)
+    return latest
 
 
 def incomplete_secret_groups(names: set[str]) -> tuple[str, ...]:
@@ -77,6 +152,21 @@ def incomplete_secret_groups(names: set[str]) -> tuple[str, ...]:
     if "GENERIC_WEBHOOK_TEMPLATE" in names and "GENERIC_WEBHOOK_URL" not in names:
         errors.append("Generic Webhook template requires a URL")
     return tuple(errors)
+
+
+def has_notification_channel(names: set[str]) -> bool:
+    complete_groups = (
+        {"BARK_DEVICE_KEY"},
+        {"FEISHU_WEBHOOK_URL"},
+        {"DINGTALK_WEBHOOK_URL"},
+        {"WEWORK_WEBHOOK_URL"},
+        {"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"},
+        {"NTFY_TOPIC"},
+        {"SLACK_WEBHOOK_URL"},
+        {"GENERIC_WEBHOOK_URL"},
+        {"EMAIL_FROM", "EMAIL_PASSWORD", "EMAIL_TO"},
+    )
+    return any(group.issubset(names) for group in complete_groups)
 
 
 def detect_repository() -> str:
@@ -197,14 +287,16 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/status":
             installed = shutil.which("gh") is not None
             authenticated = installed and gh("auth", "status", "--hostname", "github.com").returncode == 0
+            repository = suggested_repository()
             self._json(
                 200,
                 {
                     "gh_installed": installed,
                     "gh_authenticated": authenticated,
-                    "repository": suggested_repository(),
+                    "repository": repository,
                     "cloud": self.server.cloud,
                     "semester": infer_semester(date.today()),
+                    "variables": repository_variables(repository) if authenticated else {},
                 },
             )
             return
@@ -278,8 +370,30 @@ class Handler(BaseHTTPRequestHandler):
 
         secrets_payload = payload.get("secrets") or {}
         variables_payload = payload.get("variables") or {}
-        if not isinstance(secrets_payload, dict) or not isinstance(variables_payload, dict):
+        delete_secrets_payload = payload.get("delete_secrets") or []
+        if (
+            not isinstance(secrets_payload, dict)
+            or not isinstance(variables_payload, dict)
+            or not isinstance(delete_secrets_payload, list)
+        ):
             self._json(400, {"ok": False, "error": "Invalid configuration payload."})
+            return
+        monitor_enabled = str(variables_payload.get("MONITOR_ENABLED", "false")) == "true"
+        monitor_until = str(variables_payload.get("MONITOR_UNTIL", "")).strip()
+        completion_mode = str(variables_payload.get("COMPLETION_MODE", "count")).strip()
+        expected_count = str(variables_payload.get("EXPECTED_GRADE_COUNT", "")).strip()
+        expected_names = str(variables_payload.get("EXPECTED_COURSE_NAMES", "")).strip()
+        if monitor_enabled and not monitor_until:
+            self._json(400, {"ok": False, "error": "启用监控时必须填写停止日期。"})
+            return
+        if completion_mode not in {"count", "names", "date"}:
+            self._json(400, {"ok": False, "error": "请选择一种成绩完成方式。"})
+            return
+        if completion_mode == "count" and (not expected_count.isdigit() or int(expected_count) < 1):
+            self._json(400, {"ok": False, "error": "按数量判断时，预期成绩数量至少为 1。"})
+            return
+        if completion_mode == "names" and not expected_names:
+            self._json(400, {"ok": False, "error": "按课程判断时，请填写预期课程名称。"})
             return
         existing = gh(
             "secret",
@@ -300,15 +414,28 @@ class Handler(BaseHTTPRequestHandler):
             for name, value in secrets_payload.items()
             if name in SECRET_NAMES and str(value).strip()
         }
-        group_errors = incomplete_secret_groups(existing_names | submitted_names)
+        requested_deletions = {str(name) for name in delete_secrets_payload} & SECRET_NAMES
+        deleted_names = (requested_deletions - submitted_names) & existing_names
+        group_errors = incomplete_secret_groups((existing_names - deleted_names) | submitted_names)
         if group_errors:
             self._json(400, {"ok": False, "error": "; ".join(group_errors)})
+            return
+        if not has_notification_channel((existing_names - deleted_names) | submitted_names):
+            self._json(400, {"ok": False, "error": "请至少配置一种完整的通知渠道。"})
             return
         if not secrets_payload.get("GRADE_STATE_SALT") and "GRADE_STATE_SALT" not in existing_names:
             secrets_payload["GRADE_STATE_SALT"] = secrets.token_hex(32)
 
         updated_secrets: list[str] = []
+        deleted_secrets: list[str] = []
         updated_variables: list[str] = []
+        deleted_variables: list[str] = []
+        for name in sorted(deleted_names):
+            result = gh("secret", "delete", name, "--repo", repository)
+            if result.returncode != 0:
+                self._json(400, {"ok": False, "error": f"Failed to delete Secret {name}."})
+                return
+            deleted_secrets.append(name)
         for name, raw_value in secrets_payload.items():
             value = str(raw_value).strip()
             if name not in SECRET_NAMES or not value:
@@ -319,9 +446,18 @@ class Handler(BaseHTTPRequestHandler):
                 return
             updated_secrets.append(name)
 
+        existing_variables = repository_variables(repository)
         for name, raw_value in variables_payload.items():
             value = str(raw_value).strip()
-            if name not in VARIABLE_NAMES or value == "":
+            if name not in VARIABLE_NAMES:
+                continue
+            if value == "":
+                if name in existing_variables:
+                    result = gh("variable", "delete", name, "--repo", repository)
+                    if result.returncode != 0:
+                        self._json(400, {"ok": False, "error": f"Failed to delete Variable {name}."})
+                        return
+                    deleted_variables.append(name)
                 continue
             result = gh("variable", "set", name, "--repo", repository, "--body", value)
             if result.returncode != 0:
@@ -329,26 +465,57 @@ class Handler(BaseHTTPRequestHandler):
                 return
             updated_variables.append(name)
 
-        for workflow in ("check-grades.yml", "test-notifications.yml"):
+        if str(variables_payload.get("AUTO_UPDATE_ENABLED", "true")) == "true" and not enable_workflow_writes(repository):
+            self._json(
+                400,
+                {"ok": False, "error": "配置已保存，但 GitHub 未允许维护工作流写回公开文件。请在仓库 Settings → Actions → General 中允许 Read and write permissions，然后再次完成配置。"},
+            )
+            return
+
+        for workflow in ("check-grades.yml", "test-notifications.yml", "sync-upstream.yml"):
             result = gh("workflow", "enable", workflow, "--repo", repository)
             if result.returncode != 0:
                 self._json(400, {"ok": False, "error": f"配置已保存，但无法启用工作流 {workflow}。"})
                 return
 
         test_started = False
+        test_status = "not_requested"
+        test_url = ""
         if payload.get("run_test"):
+            previous_run = latest_workflow_run(repository, "test-notifications.yml")
             result = gh("workflow", "run", "test-notifications.yml", "--repo", repository)
             test_started = result.returncode == 0
             if not test_started:
                 self._json(400, {"ok": False, "error": "配置已保存，但通知测试未能启动，请再次点击完成配置。"})
                 return
+            completed_run = wait_for_workflow(
+                repository,
+                "test-notifications.yml",
+                previous_run.get("databaseId") if previous_run else None,
+            )
+            if completed_run:
+                test_url = str(completed_run.get("url", ""))
+                test_status = (
+                    "success"
+                    if completed_run.get("status") == "completed"
+                    and completed_run.get("conclusion") == "success"
+                    else "failure"
+                    if completed_run.get("status") == "completed"
+                    else "pending"
+                )
+            else:
+                test_status = "pending"
         self._json(
             200,
             {
                 "ok": True,
                 "secrets_updated": updated_secrets,
+                "secrets_deleted": deleted_secrets,
                 "variables_updated": updated_variables,
+                "variables_deleted": deleted_variables,
                 "test_started": test_started,
+                "test_status": test_status,
+                "test_url": test_url,
                 "repository_url": f"https://github.com/{repository}",
                 "actions_url": f"https://github.com/{repository}/actions",
             },
