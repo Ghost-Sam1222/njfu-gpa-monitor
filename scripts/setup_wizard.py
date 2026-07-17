@@ -83,7 +83,7 @@ def repository_variables(repository: str) -> dict[str, str]:
 
 
 def enable_workflow_writes(repository: str) -> bool:
-    """Allow the two maintenance jobs to commit only their public files."""
+    """Enable repository content writes for the explicitly scoped maintenance jobs."""
     result = gh(
         "api",
         "--method",
