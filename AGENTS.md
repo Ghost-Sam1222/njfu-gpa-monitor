@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository is a small Python monitor driven by GitHub Actions. `scripts/check_grades.py` orchestrates each run. Configuration, JWXT access, state, notifications, and transcript rendering live in focused modules under `scripts/`. The localhost setup UI is `setup/index.html`, served by `scripts/setup_wizard.py`. Workflows are in `.github/workflows/`; tests are in `tests/`; notification artwork is in `assets/`. Runtime files under `data/` and `reports/` must stay untracked.
+This repository is a small Python monitor driven by GitHub Actions. `scripts/check_grades.py` orchestrates each run. Configuration, JWXT access, state, notifications, and transcript rendering live in focused modules under `scripts/`. The setup UI is `setup/index.html`, served locally or in a private Codespace by `scripts/setup_wizard.py`; `.devcontainer/` boots the cloud path, and `docs/` is the public GitHub Pages entry. Workflows are in `.github/workflows/`; tests are in `tests/`; notification artwork is in `assets/`. Runtime files under `data/` and `reports/` must stay untracked.
 
 ## Build, Test, and Development Commands
 
@@ -31,4 +31,4 @@ Use short imperative commits such as `add email transcript reports`. Pull reques
 
 ## Security & Configuration
 
-Credentials, Cookies, webhook URLs, email authorization codes, and device keys belong in GitHub Secrets or an ignored local `.env`. Never log notification bodies, remote response bodies, course data, or full URLs containing tokens. Public setup pages must not collect Secrets; sensitive configuration is allowed only through the localhost wizard.
+Credentials, Cookies, webhook URLs, email authorization codes, and device keys belong in GitHub Secrets or an ignored local `.env`. Never log notification bodies, remote response bodies, course data, or full URLs containing tokens. The public Pages entry must never collect Secrets; sensitive configuration is allowed only through the localhost wizard or its private Codespaces port.

@@ -49,41 +49,25 @@ def should_skip(settings: Settings, state: MonitorState) -> bool:
     return False
 
 
-def format_grades(grades: list[Grade], complete: bool = False) -> str:
+def format_grades(grades: list[Grade], average_gpa: float | None = None) -> str:
     lines = []
     for grade in grades:
-        details = [f"成绩 {grade.score}"]
+        details = [f"成绩：{grade.score}"]
         if grade.gpa:
-            details.append(f"绩点 {grade.gpa}")
+            details.append(f"绩点：{grade.gpa}")
         if grade.credit:
-            details.append(f"学分 {grade.credit}")
-        lines.append(f"{grade.course_name}：{'，'.join(details)}")
-    if complete:
-        lines.append("本学期预期成绩已全部到齐。")
+            details.append(f"学分：{grade.credit}")
+        lines.append(f"{grade.course_name}｜{'，'.join(details)}")
+    if average_gpa is not None:
+        lines.append(f"平均绩点：{average_gpa:.2f}")
     return "\n".join(lines)
 
 
 def completion_summary(grades: list[Grade]) -> str:
-    average_score = weighted_average(grades, "score")
     average_gpa = weighted_average(grades, "gpa")
-    parts = ["本学期预期成绩已全部到齐，监控将在投递成功后停止。"]
-    if average_score is not None:
-        parts.append(f"学分加权平均成绩 {average_score:.2f}")
+    parts = ["本学期成绩已全部到齐。"]
     if average_gpa is not None:
-        parts.append(f"学分加权平均绩点 {average_gpa:.2f}")
-    parts.append("课程明细：")
-    for grade in grades:
-        fields = [grade.course_name]
-        if grade.course_code:
-            fields.append(grade.course_code)
-        fields.append(f"成绩 {grade.score}")
-        if grade.credit:
-            fields.append(f"学分 {grade.credit}")
-        if grade.gpa:
-            fields.append(f"绩点 {grade.gpa}")
-        if grade.course_type:
-            fields.append(grade.course_type)
-        parts.append("｜".join(fields))
+        parts.append(f"平均绩点：{average_gpa:.2f}")
     return "\n".join(parts)
 
 
@@ -102,6 +86,8 @@ def deliver_realtime(
 ) -> list[str]:
     failures: list[str] = []
     completion_marker = f"completion:{settings.semester}"
+    all_grades = list(grades_by_hash.values())
+    average_gpa = weighted_average(all_grades, "gpa")
     for channel in settings.notifications.realtime_channels():
         delivered = state.delivered(channel)
         pending_hashes = [item for item in grades_by_hash if item not in delivered]
@@ -112,7 +98,7 @@ def deliver_realtime(
                     settings.notifications,
                     channel,
                     "NJFU GPA 新成绩",
-                    format_grades(pending_grades, complete=detected_complete),
+                    format_grades(pending_grades, average_gpa),
                 )
                 delivered.update(pending_hashes)
             except NotificationError as exc:
@@ -124,7 +110,7 @@ def deliver_realtime(
                     settings.notifications,
                     channel,
                     "NJFU GPA 成绩已齐",
-                    completion_summary(list(grades_by_hash.values())),
+                    completion_summary(all_grades),
                 )
                 delivered.add(completion_marker)
             except NotificationError as exc:

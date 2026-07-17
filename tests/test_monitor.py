@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from check_grades import deliver_email, deliver_realtime, is_complete
+from check_grades import completion_summary, deliver_email, deliver_realtime, format_grades, is_complete
 from config import Settings
 from models import Grade
 from notifications import NotificationSettings
@@ -37,6 +37,17 @@ def settings() -> Settings:
 
 
 class MonitorPolicyTests(unittest.TestCase):
+    def test_realtime_message_keeps_compact_grade_format(self) -> None:
+        grades = [Grade("2025-2026-2", "1", "体育（4）", "86", "1", "3.5", "必修")]
+        self.assertEqual(
+            format_grades(grades, 3.35),
+            "体育（4）｜成绩：86，绩点：3.5，学分：1\n平均绩点：3.35",
+        )
+
+    def test_completion_message_only_adds_average_gpa(self) -> None:
+        grades = [Grade("2025-2026-2", "1", "课程A", "90", "2", "4", "必修")]
+        self.assertEqual(completion_summary(grades), "本学期成绩已全部到齐。\n平均绩点：4.00")
+
     def test_expected_count_uses_current_result_set(self) -> None:
         configured = replace(settings(), expected_grade_count=2)
         grades = [Grade(configured.semester, "1", "A", "90", "1", "4", "必修")]

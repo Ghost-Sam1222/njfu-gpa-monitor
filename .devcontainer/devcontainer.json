@@ -1,0 +1,20 @@
+{
+  "name": "NJFU GPA 云端设置",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "postCreateCommand": "pip install --user -r requirements.txt && python -m playwright install --with-deps chromium",
+  "postStartCommand": "bash scripts/start_cloud_setup.sh",
+  "forwardPorts": [8765],
+  "portsAttributes": {
+    "8765": {
+      "label": "NJFU GPA 设置",
+      "onAutoForward": "openBrowser",
+      "visibility": "private",
+      "protocol": "http"
+    }
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": []
+    }
+  }
+}

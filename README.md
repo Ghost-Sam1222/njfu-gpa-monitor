@@ -2,40 +2,33 @@
 
 南京林业大学教务系统低频成绩监控。项目使用 GitHub Actions 定时登录 JWXT，发现新增或更正成绩后推送通知；达到邮件批量阈值或本学期成绩全部到齐时，发送一份可排序的简洁 HTML 成绩单。
 
+[打开网页，开始云端配置](https://ghost-sam1222.github.io/njfu-gpa-monitor/)
+
 ## 功能
 
 - 只查询 `JW_SEMESTER` 指定学期，自动识别课程、课程编号、学分、课程属性、成绩和绩点。
 - 支持 Bark、飞书、钉钉、企业微信、Telegram、ntfy、Slack、邮件和通用 Webhook。
-- 实时渠道按批次推送新成绩；邮件可用 `EMAIL_BATCH_SIZE` 设置累计几项后发送。
-- 完成时向实时渠道发送文字版成绩单；邮件额外使用 Apple 风格 HTML，显示学分加权平均成绩、平均绩点和可排序课程明细。
+- 实时渠道按“课程｜成绩、绩点、学分”推送，并附当前学分加权平均绩点；邮件可用 `EMAIL_BATCH_SIZE` 设置累计几项后发送。
+- 成绩齐全时，实时渠道只发送完成状态和平均绩点；邮件额外使用简洁 HTML 成绩单，显示平均成绩、平均绩点和可排序课程明细。
 - 每个渠道独立记录投递状态。一个渠道失败时，不会让其他成功渠道重复通知。
 - 支持 2、3、6、12、24 小时频率预设；未选中的计划不会启动 GitHub Runner。
+- 每月只做一次轻量保活提交，避免公开仓库因 60 天无活动被 GitHub 自动停用定时任务。
 - 状态按学期隔离。新学期不会被上学期的“已完成”缓存拦住。
 
 通知渠道设计参考了 [TrendRadar](https://github.com/sansan0/TrendRadar)，但本项目只保留成绩监控所需的轻量实现。
 
-## 快速设置
+## 一键云端设置
 
-先从本仓库创建自己的仓库并下载到电脑。安装 [GitHub CLI](https://cli.github.com/)，完成一次登录：
-
-```bash
-gh auth login -h github.com
-```
-
-macOS 可双击 `setup-macos.command`，Windows 可双击 `setup-windows.bat`。首次启动会在 `.setup-venv` 中安装依赖和专用 Chromium，全部留在项目目录内。也可手动运行：
-
-```bash
-python3 scripts/setup_wizard.py
-```
-
-本地设置页可以：
+打开[云端配置页](https://ghost-sam1222.github.io/njfu-gpa-monitor/)，输入自己的 GitHub 用户名，然后依次点击两个按钮。第一个按钮通过 GitHub 官方模板创建个人仓库，第二个按钮启动该仓库的临时 Codespace，随后自动打开设置页。用户只需要：
 
 1. 验证教务账号和指定学期是否能正常查询。
 2. 选择检查频率、停止日期和成绩完成条件。
 3. 配置任意通知渠道。
-4. 通过本机 GitHub CLI 写入仓库 Secrets/Variables，并触发通知测试。
+4. 点击“完成配置”，写入 Secrets/Variables 并触发通知测试。
 
-设置页只监听 `127.0.0.1`，不使用浏览器 Cookie 或 LocalStorage 保存表单。空白 Secret 不会覆盖仓库中已经存在的值，重复运行向导也不会轮换已有的 `GRADE_STATE_SALT`。
+Codespaces 转发端口保持 Private，只有创建者登录 GitHub 后才能访问。设置页不使用浏览器 Cookie 或 LocalStorage 保存表单；账号密码不会经过 GitHub Pages，也不会发送给项目作者。空白 Secret 不会覆盖仓库中已有值，重复设置不会轮换已有的 `GRADE_STATE_SALT`。
+
+本地备用路径会自动准备隔离环境：macOS 双击 `setup-macos.command`，Linux 运行 `setup-linux.sh`，Windows 双击 `setup-windows.bat`。
 
 ## 登录方式
 
@@ -87,10 +80,11 @@ python3 scripts/setup_wizard.py
 
 ## 隐私边界
 
-这个项目保证的是“个人数据不进入公开仓库和公开日志”，不是“数据完全不离开本机”：
+这个项目保证的是“个人数据不进入公开仓库和公开日志”，不是“数据只在个人设备本地处理”：
 
 - GitHub Secrets 由 GitHub 加密保存，Actions Runner 在运行期间会读取账号并访问学校系统。
-- 通知服务会收到通知正文；实时通知包含课程名和成绩，邮件会收到完整成绩单。
+- 通知服务会收到通知正文；实时通知包含课程、成绩、绩点、学分和平均绩点，邮件会收到完整成绩单。
+- 云端设置时，账号密码会通过 GitHub 的加密连接进入用户自己的私有 Codespace，再写入 GitHub Secrets；不会经过公开 Pages 或项目作者的服务器。
 - HTML 成绩单只在 Runner 临时目录生成并作为邮件正文发送，不上传 GitHub Pages 或 Actions Artifact。
 - Actions 缓存只保存学期、更新时间、完成状态、待发计数、渠道名称和加盐哈希，不保存课程名、成绩、绩点、密码、Cookie 或推送密钥。
 - 公开日志只显示渠道名以及“是否变化/是否完成”，不输出成绩数量、课程名、成绩或远端响应正文。

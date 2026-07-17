@@ -10,16 +10,19 @@ import shutil
 import subprocess
 import threading
 import webbrowser
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
 from grade_source import GradeSourceError, fetch_grades
+from config import infer_semester
 
 ROOT = Path(__file__).resolve().parents[1]
 PAGE = ROOT / "setup" / "index.html"
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+DEFAULT_REPOSITORY = "Ghost-Sam1222/njfu-gpa-monitor"
 SECRET_NAMES = {
     "JW_USERNAME",
     "JW_PASSWORD",
@@ -89,6 +92,28 @@ def detect_repository() -> str:
     return match.group(1) if match else ""
 
 
+def cloud_mode() -> bool:
+    return os.environ.get("SETUP_CLOUD") == "1" or os.environ.get("CODESPACES") == "true"
+
+
+def source_repository() -> str:
+    return os.environ.get("GITHUB_REPOSITORY", "").strip() or detect_repository() or DEFAULT_REPOSITORY
+
+
+def suggested_repository() -> str:
+    return source_repository()
+
+
+def cloud_target_allowed(repository: str) -> bool:
+    return not cloud_mode() or repository.casefold() == source_repository().casefold()
+
+
+def codespace_host(port: int) -> str:
+    name = os.environ.get("CODESPACE_NAME", "").strip()
+    domain = os.environ.get("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "app.github.dev").strip()
+    return f"{name}-{port}.{domain}" if name and domain else ""
+
+
 def gh(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["gh", *args],
@@ -102,6 +127,8 @@ def gh(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]
 
 class SetupServer(ThreadingHTTPServer):
     csrf_token: str
+    cloud: bool
+    trusted_cloud_host: str
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -119,27 +146,45 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-    def _is_local_request(self) -> bool:
+    def _is_trusted_request(self) -> bool:
         port = self.server.server_port
         allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
-        if self.headers.get("Host", "").lower() not in allowed_hosts:
+        if self.server.trusted_cloud_host:
+            allowed_hosts.add(self.server.trusted_cloud_host.lower())
+        host = self.headers.get("Host", "").lower()
+        if host not in allowed_hosts:
             return False
         origin = self.headers.get("Origin")
         if not origin:
             return True
         parsed = urlparse(origin)
-        return (
+        local_origin = (
             parsed.scheme == "http"
             and parsed.hostname in {"127.0.0.1", "localhost"}
             and parsed.port == port
         )
+        cloud_origin = (
+            bool(self.server.trusted_cloud_host)
+            and parsed.scheme == "https"
+            and parsed.netloc.lower() == self.server.trusted_cloud_host.lower()
+        )
+        return local_origin or cloud_origin
 
     def do_GET(self) -> None:
-        if not self._is_local_request():
+        if not self._is_trusted_request():
             self.send_error(403)
             return
         if self.path == "/":
-            content = PAGE.read_text(encoding="utf-8").replace("__CSRF_TOKEN__", self.server.csrf_token)
+            context = (
+                "本页运行在你的私有 GitHub Codespace 中。表单不会写入浏览器存储，也不会发送给项目作者。"
+                if self.server.cloud
+                else "本页只运行在 127.0.0.1，不保存表单或写入浏览器存储。"
+            )
+            content = (
+                PAGE.read_text(encoding="utf-8")
+                .replace("__CSRF_TOKEN__", self.server.csrf_token)
+                .replace("__SETUP_CONTEXT__", context)
+            )
             encoded = content.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -152,12 +197,21 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/status":
             installed = shutil.which("gh") is not None
             authenticated = installed and gh("auth", "status", "--hostname", "github.com").returncode == 0
-            self._json(200, {"gh_installed": installed, "gh_authenticated": authenticated, "repository": detect_repository()})
+            self._json(
+                200,
+                {
+                    "gh_installed": installed,
+                    "gh_authenticated": authenticated,
+                    "repository": suggested_repository(),
+                    "cloud": self.server.cloud,
+                    "semester": infer_semester(date.today()),
+                },
+            )
             return
         self.send_error(404)
 
     def do_POST(self) -> None:
-        if not self._is_local_request():
+        if not self._is_trusted_request():
             self.send_error(403)
             return
         if self.path not in {"/api/apply", "/api/verify-jw"}:
@@ -207,11 +261,19 @@ class Handler(BaseHTTPRequestHandler):
         if not REPOSITORY_PATTERN.fullmatch(repository):
             self._json(400, {"ok": False, "error": "Repository must use owner/name format."})
             return
+        if not cloud_target_allowed(repository):
+            self._json(400, {"ok": False, "error": "云端设置只能配置当前 Codespace 对应的仓库。"})
+            return
         if shutil.which("gh") is None:
             self._json(400, {"ok": False, "error": "GitHub CLI is not installed."})
             return
         if gh("auth", "status", "--hostname", "github.com").returncode != 0:
             self._json(400, {"ok": False, "error": "Run gh auth login -h github.com first."})
+            return
+
+        existing_repository = gh("repo", "view", repository, "--json", "nameWithOwner")
+        if existing_repository.returncode != 0:
+            self._json(400, {"ok": False, "error": "监控仓库不存在或当前 Codespace 无权配置它，请从云端入口重新进入。"})
             return
 
         secrets_payload = payload.get("secrets") or {}
@@ -267,10 +329,19 @@ class Handler(BaseHTTPRequestHandler):
                 return
             updated_variables.append(name)
 
+        for workflow in ("check-grades.yml", "test-notifications.yml"):
+            result = gh("workflow", "enable", workflow, "--repo", repository)
+            if result.returncode != 0:
+                self._json(400, {"ok": False, "error": f"配置已保存，但无法启用工作流 {workflow}。"})
+                return
+
         test_started = False
         if payload.get("run_test"):
             result = gh("workflow", "run", "test-notifications.yml", "--repo", repository)
             test_started = result.returncode == 0
+            if not test_started:
+                self._json(400, {"ok": False, "error": "配置已保存，但通知测试未能启动，请再次点击完成配置。"})
+                return
         self._json(
             200,
             {
@@ -278,6 +349,8 @@ class Handler(BaseHTTPRequestHandler):
                 "secrets_updated": updated_secrets,
                 "variables_updated": updated_variables,
                 "test_started": test_started,
+                "repository_url": f"https://github.com/{repository}",
+                "actions_url": f"https://github.com/{repository}/actions",
             },
         )
 
@@ -286,10 +359,17 @@ def main() -> None:
     if not PAGE.exists():
         raise SystemExit("setup/index.html is missing")
     port = int(os.environ.get("SETUP_PORT", "0"))
-    server = SetupServer(("127.0.0.1", port), Handler)
+    is_cloud = cloud_mode()
+    server = SetupServer(("0.0.0.0" if is_cloud else "127.0.0.1", port), Handler)
     server.csrf_token = secrets.token_urlsafe(32)
-    url = f"http://127.0.0.1:{server.server_port}/"
-    print(f"Local setup wizard: {url}")
+    server.cloud = is_cloud
+    server.trusted_cloud_host = codespace_host(server.server_port) if is_cloud else ""
+    url = (
+        f"https://{server.trusted_cloud_host}/"
+        if server.trusted_cloud_host
+        else f"http://127.0.0.1:{server.server_port}/"
+    )
+    print(f"Setup wizard: {url}")
     print("Press Ctrl+C to stop it.")
     if os.environ.get("SETUP_NO_BROWSER") != "1":
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()
