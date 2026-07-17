@@ -80,12 +80,13 @@ def send_bark(config: BarkConfig, title: str, body: str) -> None:
     except HTTPError as exc:
         raise BarkError(f"HTTP {exc.code}") from exc
     except URLError as exc:
-        raise BarkError(str(exc.reason)) from exc
+        raise BarkError(f"network request failed: {type(exc.reason).__name__}") from exc
+    except (OSError, TimeoutError, TypeError, ValueError) as exc:
+        raise BarkError(f"network request failed: {type(exc).__name__}") from exc
 
     try:
         result = json.loads(response_body)
     except json.JSONDecodeError:
         raise BarkError("Bark returned a non-JSON response")
     if str(result.get("code", "200")) != "200":
-        message = result.get("message") or result.get("error") or "Bark rejected the push"
-        raise BarkError(str(message)[:120])
+        raise BarkError("Bark rejected the push")

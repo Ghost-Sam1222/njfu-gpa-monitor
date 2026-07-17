@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+import secrets
+import shutil
+import subprocess
+import threading
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from types import SimpleNamespace
+from urllib.parse import urlparse
+
+from grade_source import GradeSourceError, fetch_grades
+
+ROOT = Path(__file__).resolve().parents[1]
+PAGE = ROOT / "setup" / "index.html"
+REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+SECRET_NAMES = {
+    "JW_USERNAME",
+    "JW_PASSWORD",
+    "JW_COOKIE",
+    "GRADE_STATE_SALT",
+    "BARK_SERVER",
+    "BARK_DEVICE_KEY",
+    "FEISHU_WEBHOOK_URL",
+    "DINGTALK_WEBHOOK_URL",
+    "WEWORK_WEBHOOK_URL",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_CHAT_ID",
+    "NTFY_SERVER_URL",
+    "NTFY_TOPIC",
+    "NTFY_TOKEN",
+    "SLACK_WEBHOOK_URL",
+    "GENERIC_WEBHOOK_URL",
+    "GENERIC_WEBHOOK_TEMPLATE",
+    "EMAIL_FROM",
+    "EMAIL_PASSWORD",
+    "EMAIL_TO",
+    "EMAIL_SMTP_SERVER",
+    "EMAIL_SMTP_PORT",
+}
+VARIABLE_NAMES = {
+    "JW_SEMESTER",
+    "CHECK_INTERVAL_HOURS",
+    "MONITOR_ENABLED",
+    "CHECK_START_DATE",
+    "MONITOR_UNTIL",
+    "EXPECTED_COURSE_NAMES",
+    "EXPECTED_GRADE_COUNT",
+    "NOTIFY_ON_FIRST_RUN",
+    "EMAIL_BATCH_SIZE",
+    "FINAL_REPORT_ENABLED",
+    "BARK_GROUP",
+    "BARK_SOUND",
+    "BARK_ICON",
+}
+
+
+def incomplete_secret_groups(names: set[str]) -> tuple[str, ...]:
+    errors: list[str] = []
+    telegram = {"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}
+    email = {"EMAIL_FROM", "EMAIL_PASSWORD", "EMAIL_TO"}
+    if names & telegram and not telegram.issubset(names):
+        errors.append("Telegram requires both Bot Token and Chat ID")
+    if names & email and not email.issubset(names):
+        errors.append("Email requires sender, authorization code, and recipient")
+    if "NTFY_TOKEN" in names and "NTFY_TOPIC" not in names:
+        errors.append("ntfy Token requires a Topic")
+    if "GENERIC_WEBHOOK_TEMPLATE" in names and "GENERIC_WEBHOOK_URL" not in names:
+        errors.append("Generic Webhook template requires a URL")
+    return tuple(errors)
+
+
+def detect_repository() -> str:
+    result = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    remote = result.stdout.strip()
+    match = re.search(r"github\.com(?::\d+)?[/:]([^/]+/[^/]+?)(?:\.git)?$", remote)
+    return match.group(1) if match else ""
+
+
+def gh(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["gh", *args],
+        input=stdin,
+        text=True,
+        capture_output=True,
+        timeout=45,
+        check=False,
+    )
+
+
+class SetupServer(ThreadingHTTPServer):
+    csrf_token: str
+
+
+class Handler(BaseHTTPRequestHandler):
+    server: SetupServer
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def _json(self, status: int, payload: dict[str, object]) -> None:
+        encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def _is_local_request(self) -> bool:
+        port = self.server.server_port
+        allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        if self.headers.get("Host", "").lower() not in allowed_hosts:
+            return False
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        parsed = urlparse(origin)
+        return (
+            parsed.scheme == "http"
+            and parsed.hostname in {"127.0.0.1", "localhost"}
+            and parsed.port == port
+        )
+
+    def do_GET(self) -> None:
+        if not self._is_local_request():
+            self.send_error(403)
+            return
+        if self.path == "/":
+            content = PAGE.read_text(encoding="utf-8").replace("__CSRF_TOKEN__", self.server.csrf_token)
+            encoded = content.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'")
+            self.end_headers()
+            self.wfile.write(encoded)
+            return
+        if self.path == "/api/status":
+            installed = shutil.which("gh") is not None
+            authenticated = installed and gh("auth", "status", "--hostname", "github.com").returncode == 0
+            self._json(200, {"gh_installed": installed, "gh_authenticated": authenticated, "repository": detect_repository()})
+            return
+        self.send_error(404)
+
+    def do_POST(self) -> None:
+        if not self._is_local_request():
+            self.send_error(403)
+            return
+        if self.path not in {"/api/apply", "/api/verify-jw"}:
+            self.send_error(404)
+            return
+        if self.headers.get("X-CSRF-Token") != self.server.csrf_token:
+            self._json(403, {"ok": False, "error": "Invalid local setup token."})
+            return
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0 or length > 65536:
+            self._json(400, {"ok": False, "error": "Invalid request size."})
+            return
+        try:
+            payload = json.loads(self.rfile.read(length))
+        except json.JSONDecodeError:
+            self._json(400, {"ok": False, "error": "Invalid JSON."})
+            return
+        if not isinstance(payload, dict):
+            self._json(400, {"ok": False, "error": "Invalid configuration payload."})
+            return
+        if self.path == "/api/verify-jw":
+            username = str(payload.get("username", "")).strip()
+            password = str(payload.get("password", "")).strip()
+            cookie = str(payload.get("cookie", "")).strip()
+            semester = str(payload.get("semester", "")).strip()
+            if not semester or (not cookie and (not username or not password)):
+                self._json(400, {"ok": False, "error": "请填写学期和账号密码，或填写 Cookie。"})
+                return
+            try:
+                asyncio.run(
+                    fetch_grades(
+                        SimpleNamespace(
+                            base_url="https://jwxt.njfu.edu.cn",
+                            username=username,
+                            password=password,
+                            cookie=cookie,
+                            semester=semester,
+                        )
+                    )
+                )
+            except GradeSourceError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True})
+            return
+        repository = str(payload.get("repository", "")).strip()
+        if not REPOSITORY_PATTERN.fullmatch(repository):
+            self._json(400, {"ok": False, "error": "Repository must use owner/name format."})
+            return
+        if shutil.which("gh") is None:
+            self._json(400, {"ok": False, "error": "GitHub CLI is not installed."})
+            return
+        if gh("auth", "status", "--hostname", "github.com").returncode != 0:
+            self._json(400, {"ok": False, "error": "Run gh auth login -h github.com first."})
+            return
+
+        secrets_payload = payload.get("secrets") or {}
+        variables_payload = payload.get("variables") or {}
+        if not isinstance(secrets_payload, dict) or not isinstance(variables_payload, dict):
+            self._json(400, {"ok": False, "error": "Invalid configuration payload."})
+            return
+        existing = gh(
+            "secret",
+            "list",
+            "--repo",
+            repository,
+            "--json",
+            "name",
+            "--jq",
+            ".[].name",
+        )
+        if existing.returncode != 0:
+            self._json(400, {"ok": False, "error": "Failed to inspect existing Secrets."})
+            return
+        existing_names = set(existing.stdout.splitlines())
+        submitted_names = {
+            name
+            for name, value in secrets_payload.items()
+            if name in SECRET_NAMES and str(value).strip()
+        }
+        group_errors = incomplete_secret_groups(existing_names | submitted_names)
+        if group_errors:
+            self._json(400, {"ok": False, "error": "; ".join(group_errors)})
+            return
+        if not secrets_payload.get("GRADE_STATE_SALT") and "GRADE_STATE_SALT" not in existing_names:
+            secrets_payload["GRADE_STATE_SALT"] = secrets.token_hex(32)
+
+        updated_secrets: list[str] = []
+        updated_variables: list[str] = []
+        for name, raw_value in secrets_payload.items():
+            value = str(raw_value).strip()
+            if name not in SECRET_NAMES or not value:
+                continue
+            result = gh("secret", "set", name, "--repo", repository, stdin=value)
+            if result.returncode != 0:
+                self._json(400, {"ok": False, "error": f"Failed to set Secret {name}."})
+                return
+            updated_secrets.append(name)
+
+        for name, raw_value in variables_payload.items():
+            value = str(raw_value).strip()
+            if name not in VARIABLE_NAMES or value == "":
+                continue
+            result = gh("variable", "set", name, "--repo", repository, "--body", value)
+            if result.returncode != 0:
+                self._json(400, {"ok": False, "error": f"Failed to set Variable {name}."})
+                return
+            updated_variables.append(name)
+
+        test_started = False
+        if payload.get("run_test"):
+            result = gh("workflow", "run", "test-notifications.yml", "--repo", repository)
+            test_started = result.returncode == 0
+        self._json(
+            200,
+            {
+                "ok": True,
+                "secrets_updated": updated_secrets,
+                "variables_updated": updated_variables,
+                "test_started": test_started,
+            },
+        )
+
+
+def main() -> None:
+    if not PAGE.exists():
+        raise SystemExit("setup/index.html is missing")
+    port = int(os.environ.get("SETUP_PORT", "0"))
+    server = SetupServer(("127.0.0.1", port), Handler)
+    server.csrf_token = secrets.token_urlsafe(32)
+    url = f"http://127.0.0.1:{server.server_port}/"
+    print(f"Local setup wizard: {url}")
+    print("Press Ctrl+C to stop it.")
+    if os.environ.get("SETUP_NO_BROWSER") != "1":
+        threading.Timer(0.4, lambda: webbrowser.open(url)).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

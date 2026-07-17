@@ -2,334 +2,210 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
-import os
 import re
 import sys
-from dataclasses import dataclass
-from datetime import date, datetime
-from pathlib import Path
-from typing import Any, Optional
+from datetime import date
 
-from bark_notify import BarkConfig, BarkError, describe_config, send_bark
-
-DEFAULT_BASE_URL = "https://jwxt.njfu.edu.cn"
-DEFAULT_STATE_PATH = Path("data/grade_state.json")
+from config import ConfigError, Settings, load_settings
+from grade_source import GradeSourceError, fetch_grades
+from models import Grade
+from notifications import NotificationError, send_channel, send_email
+from report import weighted_average, write_transcript
+from state import MonitorState, load_state, save_state
 
 
 class MonitorError(RuntimeError):
     pass
 
 
-@dataclass(frozen=True)
-class Settings:
-    base_url: str
-    username: str
-    password: str
-    semester: str
-    bark_server: str
-    bark_device_key: str
-    bark_group: str
-    bark_sound: str
-    bark_icon: str
-    enabled: bool
-    monitor_until: Optional[date]
-    check_start_date: Optional[date]
-    expected_course_names: tuple[str, ...]
-    expected_new_count: int
-    notify_on_first_run: bool
-    state_salt: str
-    state_path: Path
+def normalized_name(value: str) -> str:
+    return re.sub(r"\s+", "", value).casefold()
 
 
-def env(name: str, default: str = "") -> str:
-    value = os.environ.get(name)
-    return default if value is None or value == "" else value
-
-
-def parse_bool(value: str, default: bool = False) -> bool:
-    if value == "":
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
-def parse_date(value: str) -> Optional[date]:
-    if not value:
-        return None
-    return datetime.strptime(value, "%Y-%m-%d").date()
-
-
-def parse_csv(value: str) -> tuple[str, ...]:
-    return tuple(part.strip() for part in re.split(r"[,，\n]", value) if part.strip())
-
-
-def infer_semester(today: date) -> str:
-    if today.month >= 8:
-        return f"{today.year}-{today.year + 1}-1"
-    return f"{today.year - 1}-{today.year}-2"
-
-
-def load_dotenv(path: Path = Path(".env")) -> None:
-    if not path.exists():
-        return
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-
-
-def load_settings() -> Settings:
-    load_dotenv()
-    today = date.today()
-    username = env("JW_USERNAME")
-    password = env("JW_PASSWORD")
-    device_key = env("BARK_DEVICE_KEY")
-    salt = env("GRADE_STATE_SALT")
-    if not username or not password:
-        raise MonitorError("Missing JW_USERNAME or JW_PASSWORD.")
-    if not device_key:
-        raise MonitorError("Missing BARK_DEVICE_KEY.")
-    if not salt:
-        raise MonitorError("Missing GRADE_STATE_SALT.")
-    if salt == "replace-with-long-random-secret" or len(salt) < 32:
-        raise MonitorError("GRADE_STATE_SALT must be a random string of at least 32 characters.")
-    return Settings(
-        base_url=env("JW_BASE_URL", DEFAULT_BASE_URL).rstrip("/"),
-        username=username,
-        password=password,
-        semester=env("JW_SEMESTER", infer_semester(today)),
-        bark_server=env("BARK_SERVER", "https://api.day.app").rstrip("/"),
-        bark_device_key=device_key,
-        bark_group=env("BARK_GROUP", "NJFU-GPA"),
-        bark_sound=env("BARK_SOUND", "telegraph"),
-        bark_icon=env("BARK_ICON"),
-        enabled=parse_bool(env("MONITOR_ENABLED", "true"), default=True),
-        monitor_until=parse_date(env("MONITOR_UNTIL")),
-        check_start_date=parse_date(env("CHECK_START_DATE")),
-        expected_course_names=parse_csv(env("EXPECTED_COURSE_NAMES")),
-        expected_new_count=int(env("EXPECTED_NEW_COUNT", "0")),
-        notify_on_first_run=parse_bool(env("NOTIFY_ON_FIRST_RUN"), default=False),
-        state_salt=salt,
-        state_path=Path(env("GRADE_STATE_PATH", str(DEFAULT_STATE_PATH))),
-    )
-
-
-async def fetch_grades(settings: Settings) -> list[dict[str, str]]:
-    from playwright.async_api import async_playwright
-
-    login_url = f"{settings.base_url}/jsxsd/framework/xsMainV.jsp"
-    grade_url = f"{settings.base_url}/jsxsd/kscj/cjcx_list"
-    async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
-        page = await browser.new_page(
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-            ),
-            locale="zh-CN",
-        )
-        try:
-            await page.goto(login_url, wait_until="domcontentloaded", timeout=60000)
-            if "authserver/login" in page.url:
-                await page.fill("#username", settings.username)
-                await page.fill("#password", settings.password)
-                await page.click('button[type="submit"]')
-                await page.wait_for_load_state("domcontentloaded", timeout=60000)
-                await page.wait_for_timeout(1500)
-            if "authserver/login" in page.url:
-                raise MonitorError("Browser login stayed on the unified-auth login page.")
-            await page.goto(grade_url, wait_until="domcontentloaded", timeout=60000)
-            html = await page.content()
-            grades = parse_grades_html(html)
-            if grades:
-                return grades
-            grades = await post_grade_query(page, grade_url)
-            if not grades:
-                raise MonitorError("Could not parse grade table from the grade page.")
-            return grades
-        finally:
-            await browser.close()
-
-
-async def post_grade_query(page: Any, grade_url: str) -> list[dict[str, str]]:
-    html = await page.evaluate(
-        """async (url) => {
-            const form = new URLSearchParams({kksj: '', kcxz: '', kcsx: '', kcmc: '', xsfs: 'all'});
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                body: form.toString(),
-                credentials: 'include'
-            });
-            return await res.text();
-        }""",
-        grade_url,
-    )
-    return parse_grades_html(html)
-
-
-def normalize_text(value: Any) -> str:
-    return re.sub(r"\s+", " ", str(value or "")).strip()
-
-
-def parse_grades_html(html: str) -> list[dict[str, str]]:
-    from bs4 import BeautifulSoup
-
-    soup = BeautifulSoup(html, "html.parser")
-    table = soup.find("table", {"id": "dataList"})
-    if table is None:
-        return []
-    grades: list[dict[str, str]] = []
-    for row in table.find_all("tr")[1:]:
-        cols = [normalize_text(col.get_text(" ", strip=True)) for col in row.find_all("td")]
-        if len(cols) < 9:
-            continue
-        grades.append(
-            {
-                "semester": cols[1] if len(cols) > 1 else "",
-                "course_code": cols[2] if len(cols) > 2 else "",
-                "course_name": cols[3] if len(cols) > 3 else "",
-                "score": cols[4] if len(cols) > 4 else "",
-                "credit": cols[6] if len(cols) > 6 else "",
-                "gpa": cols[8] if len(cols) > 8 else "",
-                "course_type": cols[13] if len(cols) > 13 else "",
-            }
-        )
-    return [grade for grade in grades if grade["course_name"] and grade["score"]]
-
-
-def grade_identity(settings: Settings, grade: dict[str, str]) -> str:
-    payload = "|".join(
-        [
-            settings.state_salt,
-            grade.get("semester", ""),
-            grade.get("course_code", ""),
-            grade.get("course_name", ""),
-            grade.get("score", ""),
-            grade.get("credit", ""),
-            grade.get("gpa", ""),
-        ]
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def load_state(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {"hashes": [], "complete": False}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {"hashes": [], "complete": False}
-
-
-def save_state(settings: Settings, grades: list[dict[str, str]], complete: bool) -> None:
-    settings.state_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
-        "semester": settings.semester,
-        "known_count": len(grades),
-        "hashes": sorted(grade_identity(settings, grade) for grade in grades),
-        "complete": complete,
-    }
-    settings.state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def matches_expected(name: str, expected: str) -> bool:
-    compact_name = re.sub(r"\s+", "", name)
-    compact_expected = re.sub(r"\s+", "", expected)
-    return compact_expected in compact_name or compact_name in compact_expected
-
-
-def is_complete(settings: Settings, grades: list[dict[str, str]]) -> bool:
+def is_complete(settings: Settings, grades: list[Grade]) -> bool:
     if settings.expected_course_names:
-        names = [grade["course_name"] for grade in grades]
-        return all(any(matches_expected(name, expected) for name in names) for expected in settings.expected_course_names)
-    if settings.expected_new_count > 0:
-        return len(grades) >= settings.expected_new_count
+        names = {normalized_name(grade.course_name) for grade in grades}
+        expected = {normalized_name(name) for name in settings.expected_course_names}
+        return expected.issubset(names)
+    if settings.expected_grade_count > 0:
+        return len(grades) >= settings.expected_grade_count
     return False
 
 
-def bark_push(settings: Settings, title: str, body: str) -> None:
-    config = BarkConfig(
-        server=settings.bark_server,
-        device_key=settings.bark_device_key,
-        group=settings.bark_group,
-        sound=settings.bark_sound,
-        icon=settings.bark_icon,
-    )
-    print(f"Bark options: {describe_config(config)}")
-    try:
-        send_bark(config, title, body)
-    except BarkError as exc:
-        raise MonitorError(f"Bark push failed: {exc}") from exc
-
-
-def format_grade(grade: dict[str, str]) -> str:
-    parts = [
-        f"成绩：{grade.get('score', '')}",
-        f"绩点：{grade.get('gpa', '')}",
-        f"学分：{grade.get('credit', '')}",
-    ]
-    return f"{grade.get('course_name', '新成绩')}｜" + "，".join(part for part in parts if not part.endswith("："))
-
-
-def should_skip(settings: Settings, state: dict[str, Any]) -> bool:
+def should_skip(settings: Settings, state: MonitorState) -> bool:
     today = date.today()
     if not settings.enabled:
-        print("Monitor disabled by MONITOR_ENABLED=false.")
+        print("Monitor disabled.")
         return True
     if settings.check_start_date and today < settings.check_start_date:
-        print(f"Before CHECK_START_DATE={settings.check_start_date}; skipping.")
+        print("Monitor has not reached its start date.")
         return True
     if settings.monitor_until and today > settings.monitor_until:
-        print(f"After MONITOR_UNTIL={settings.monitor_until}; skipping.")
+        print("Monitor has passed its stop date.")
         return True
-    if state.get("complete"):
-        print("Expected courses are already complete; skipping login.")
+    if state.complete:
+        print("Expected grades are complete; login skipped.")
         return True
     return False
+
+
+def format_grades(grades: list[Grade], complete: bool = False) -> str:
+    lines = []
+    for grade in grades:
+        details = [f"成绩 {grade.score}"]
+        if grade.gpa:
+            details.append(f"绩点 {grade.gpa}")
+        if grade.credit:
+            details.append(f"学分 {grade.credit}")
+        lines.append(f"{grade.course_name}：{'，'.join(details)}")
+    if complete:
+        lines.append("本学期预期成绩已全部到齐。")
+    return "\n".join(lines)
+
+
+def completion_summary(grades: list[Grade]) -> str:
+    average_score = weighted_average(grades, "score")
+    average_gpa = weighted_average(grades, "gpa")
+    parts = ["本学期预期成绩已全部到齐，监控将在投递成功后停止。"]
+    if average_score is not None:
+        parts.append(f"学分加权平均成绩 {average_score:.2f}")
+    if average_gpa is not None:
+        parts.append(f"学分加权平均绩点 {average_gpa:.2f}")
+    parts.append("课程明细：")
+    for grade in grades:
+        fields = [grade.course_name]
+        if grade.course_code:
+            fields.append(grade.course_code)
+        fields.append(f"成绩 {grade.score}")
+        if grade.credit:
+            fields.append(f"学分 {grade.credit}")
+        if grade.gpa:
+            fields.append(f"绩点 {grade.gpa}")
+        if grade.course_type:
+            fields.append(grade.course_type)
+        parts.append("｜".join(fields))
+    return "\n".join(parts)
+
+
+def initialize_channel_baselines(state: MonitorState, channels: tuple[str, ...], current_hashes: set[str]) -> None:
+    for channel in channels:
+        if channel not in state.delivered_by_channel:
+            state.delivered_by_channel[channel] = set(current_hashes)
+            print(f"Initialized notification channel: channel={channel}.")
+
+
+def deliver_realtime(
+    settings: Settings,
+    state: MonitorState,
+    grades_by_hash: dict[str, Grade],
+    detected_complete: bool,
+) -> list[str]:
+    failures: list[str] = []
+    completion_marker = f"completion:{settings.semester}"
+    for channel in settings.notifications.realtime_channels():
+        delivered = state.delivered(channel)
+        pending_hashes = [item for item in grades_by_hash if item not in delivered]
+        pending_grades = [grades_by_hash[item] for item in pending_hashes]
+        if pending_grades:
+            try:
+                send_channel(
+                    settings.notifications,
+                    channel,
+                    "NJFU GPA 新成绩",
+                    format_grades(pending_grades, complete=detected_complete),
+                )
+                delivered.update(pending_hashes)
+            except NotificationError as exc:
+                failures.append(f"{channel}: {exc}")
+
+        if detected_complete and completion_marker not in delivered:
+            try:
+                send_channel(
+                    settings.notifications,
+                    channel,
+                    "NJFU GPA 成绩已齐",
+                    completion_summary(list(grades_by_hash.values())),
+                )
+                delivered.add(completion_marker)
+            except NotificationError as exc:
+                failures.append(f"{channel}: {exc}")
+    return failures
+
+
+def deliver_email(
+    settings: Settings,
+    state: MonitorState,
+    grades: list[Grade],
+    detected_complete: bool,
+    new_count: int,
+) -> list[str]:
+    if not settings.notifications.email_enabled():
+        return []
+    completion_marker = f"completion:{settings.semester}"
+    delivered = state.delivered("email")
+    state.email_pending_count += new_count
+    threshold_reached = state.email_pending_count >= settings.email_batch_size
+    final_due = (
+        detected_complete
+        and settings.final_report_enabled
+        and completion_marker not in delivered
+    )
+    if not threshold_reached and not final_due:
+        return []
+
+    subject = f"NJFU {settings.semester} {'最终成绩单' if final_due else '成绩更新'}"
+    try:
+        html = write_transcript(settings.report_path, grades, settings.semester, settings.username)
+        send_email(settings.notifications, subject, completion_summary(grades), html)
+    except NotificationError as exc:
+        return [f"email: {exc}"]
+    except OSError as exc:
+        return [f"email: report generation failed: {type(exc).__name__}"]
+    state.email_pending_count = 0
+    if final_due:
+        delivered.add(completion_marker)
+    return []
 
 
 def run() -> None:
     settings = load_settings()
-    state = load_state(settings.state_path)
+    state = load_state(settings.state_path, settings.semester)
     if should_skip(settings, state):
         return
+    channels = settings.notifications.realtime_channels()
+    if not channels and not settings.notifications.email_enabled():
+        raise MonitorError("Configure at least one notification channel.")
 
     grades = asyncio.run(fetch_grades(settings))
-    known_hashes = set(state.get("hashes") or [])
-    first_run = not known_hashes
-    new_grades = [
-        grade
-        for grade in grades
-        if grade_identity(settings, grade) not in known_hashes
-    ]
-    complete = is_complete(settings, grades)
+    grades_by_hash = {grade.identity(settings.state_salt): grade for grade in grades}
+    current_hashes = set(grades_by_hash)
+    detected_complete = is_complete(settings, grades)
 
-    if first_run and not settings.notify_on_first_run:
-        print(f"Initialized baseline with {len(grades)} grades; no push on first run.")
-        save_state(settings, grades, complete)
-        return
+    if not state.initialized:
+        state.initialized = True
+        state.observed_hashes = set(current_hashes)
+        if not settings.notify_on_first_run:
+            initialize_channel_baselines(state, channels, current_hashes)
+        new_count = len(current_hashes) if settings.notify_on_first_run else 0
+    else:
+        new_count = len(current_hashes - state.observed_hashes)
+        initialize_channel_baselines(state, channels, current_hashes)
 
-    for grade in new_grades:
-        bark_push(settings, "NJFU GPA 新成绩", format_grade(grade))
-        print("Pushed one new grade notification.")
-
-    if complete and not state.get("complete"):
-        bark_push(settings, "NJFU GPA 监控完成", f"已检测到 {len(grades)} 门成绩，监控将自动停止重登录。")
-
-    save_state(settings, grades, complete)
-    print(f"Checked {len(grades)} grades; new={len(new_grades)} complete={complete}.")
+    failures = deliver_realtime(settings, state, grades_by_hash, detected_complete)
+    failures.extend(deliver_email(settings, state, grades, detected_complete, new_count))
+    state.observed_hashes.update(current_hashes)
+    state.complete = detected_complete and not failures
+    save_state(settings.state_path, state)
+    print(f"Grade check finished: changed={new_count > 0} complete={state.complete}.")
+    if failures:
+        raise MonitorError("Notification delivery failed: " + "; ".join(failures))
 
 
 def main() -> int:
     try:
         run()
         return 0
-    except MonitorError as exc:
+    except (ConfigError, GradeSourceError, MonitorError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

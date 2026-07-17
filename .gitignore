@@ -1,6 +1,8 @@
 .env
 .venv/
+.setup-venv/
 __pycache__/
 *.pyc
 playwright-report/
 data/grade_state.json
+reports/

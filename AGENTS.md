@@ -2,43 +2,33 @@
 
 ## Project Structure & Module Organization
 
-This repository contains a small Python monitor plus GitHub Actions workflows. Main logic lives in `scripts/check_grades.py`; Bark smoke tests live in `scripts/send_test_bark.py`. Runtime state is restored from and saved to GitHub Actions cache at `data/grade_state.json`; keep `data/.gitkeep` so the directory exists. Notification artwork lives in `assets/`. Automation is configured in `.github/workflows/`. Use `.env.example` as the local configuration template; never commit a real `.env`.
+This repository is a small Python monitor driven by GitHub Actions. `scripts/check_grades.py` orchestrates each run. Configuration, JWXT access, state, notifications, and transcript rendering live in focused modules under `scripts/`. The localhost setup UI is `setup/index.html`, served by `scripts/setup_wizard.py`. Workflows are in `.github/workflows/`; tests are in `tests/`; notification artwork is in `assets/`. Runtime files under `data/` and `reports/` must stay untracked.
 
 ## Build, Test, and Development Commands
 
-Create a local environment before editing:
-
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python -m playwright install chromium
+PYTHONPATH=scripts python -m unittest discover -s tests -v
+python -m py_compile scripts/*.py
 ```
 
-Run the monitor locally with test credentials in `.env`:
-
-```bash
-python scripts/check_grades.py
-```
-
-Run a quick syntax check:
-
-```bash
-python -m py_compile scripts/check_grades.py
-```
+Copy `.env.example` to `.env` for local runs, then execute `python scripts/check_grades.py`. Start the local configuration UI with `python scripts/setup_wizard.py`.
 
 ## Coding Style & Naming Conventions
 
-Use Python 3.12-compatible syntax, 4-space indentation, type hints for public helpers, and concise function names such as `load_settings`, `fetch_grades`, and `save_state`. Keep secrets in environment variables only. Do not print course scores, passwords, Bark keys, or raw HTTP URLs containing credentials.
+Use Python 3.12-compatible syntax, 4-space indentation, type hints, dataclasses for structured values, and standard-library APIs when they keep the project lighter. Modules and functions use `snake_case`; classes use `PascalCase`. Keep channel-specific HTTP payloads in `notifications.py`, parsing in `grade_source.py`, and orchestration in `check_grades.py`.
 
 ## Testing Guidelines
 
-There is no formal test suite yet. For every change, run `python -m py_compile scripts/check_grades.py`. For behavior changes, test with `MONITOR_ENABLED=false` first, then use GitHub Actions `workflow_dispatch` after Secrets and Variables are configured. Avoid committing generated local caches.
+Use `unittest`; name files `tests/test_*.py` and methods `test_*`. Cover parser column changes, semester isolation, zero-grade initialization, per-channel retries, threshold behavior, HTML escaping, and weighted averages. Never use live credentials in automated tests.
 
 ## Commit & Pull Request Guidelines
 
-Use short, imperative commit messages, for example `add grade monitor` or `update workflow schedule`. Pull requests should describe the behavior change, list any new configuration variables, and mention whether notification text, state format, or schedule changed.
+Use short imperative commits such as `add email transcript reports`. Pull requests must list new Secrets/Variables, state-schema changes, notification behavior, and verification commands.
 
-## Security & Configuration Tips
+## Security & Configuration
 
-Required private values belong in GitHub Actions Secrets: `JW_USERNAME`, `JW_PASSWORD`, `BARK_DEVICE_KEY`, and `GRADE_STATE_SALT`. Public Variables may contain term dates, expected course names, and Bark display settings. The cached state file must store only salted hashes and counts, not raw grades, and must not be committed to git.
+Credentials, Cookies, webhook URLs, email authorization codes, and device keys belong in GitHub Secrets or an ignored local `.env`. Never log notification bodies, remote response bodies, course data, or full URLs containing tokens. Public setup pages must not collect Secrets; sensitive configuration is allowed only through the localhost wizard.
