@@ -380,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         monitor_enabled = str(variables_payload.get("MONITOR_ENABLED", "false")) == "true"
         monitor_until = str(variables_payload.get("MONITOR_UNTIL", "")).strip()
-        completion_mode = str(variables_payload.get("COMPLETION_MODE", "count")).strip()
+        completion_mode = str(variables_payload.get("COMPLETION_MODE", "date")).strip()
         expected_count = str(variables_payload.get("EXPECTED_GRADE_COUNT", "")).strip()
         expected_names = str(variables_payload.get("EXPECTED_COURSE_NAMES", "")).strip()
         if monitor_enabled and not monitor_until:

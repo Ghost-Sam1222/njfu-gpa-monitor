@@ -36,6 +36,22 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "at least 1"):
                 load_settings()
 
+    def test_legacy_count_zero_uses_existing_course_names(self) -> None:
+        environment = base_environment()
+        environment["EXPECTED_GRADE_COUNT"] = "0"
+        environment["EXPECTED_COURSE_NAMES"] = "课程A,课程B"
+        with patch.dict(os.environ, environment, clear=True):
+            configured = load_settings()
+        self.assertEqual(configured.completion_mode, "names")
+        self.assertEqual(configured.expected_course_names, ("课程A", "课程B"))
+
+    def test_unset_completion_mode_defaults_to_stop_date(self) -> None:
+        environment = base_environment()
+        environment.pop("COMPLETION_MODE")
+        environment["EXPECTED_GRADE_COUNT"] = "0"
+        with patch.dict(os.environ, environment, clear=True):
+            self.assertEqual(load_settings().completion_mode, "date")
+
     def test_date_mode_does_not_require_a_completion_count(self) -> None:
         environment = base_environment()
         environment["COMPLETION_MODE"] = "date"

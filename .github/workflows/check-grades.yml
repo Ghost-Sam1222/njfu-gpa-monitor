@@ -154,7 +154,7 @@ jobs:
           CHECK_START_DATE: ${{ vars.CHECK_START_DATE }}
           EXPECTED_COURSE_NAMES: ${{ vars.EXPECTED_COURSE_NAMES }}
           EXPECTED_GRADE_COUNT: ${{ vars.EXPECTED_GRADE_COUNT || vars.EXPECTED_NEW_COUNT || '0' }}
-          COMPLETION_MODE: ${{ vars.COMPLETION_MODE || 'count' }}
+          COMPLETION_MODE: ${{ vars.COMPLETION_MODE || 'date' }}
           NOTIFY_ON_FIRST_RUN: ${{ vars.NOTIFY_ON_FIRST_RUN || 'false' }}
           EMAIL_BATCH_SIZE: ${{ vars.EMAIL_BATCH_SIZE || '3' }}
           FINAL_REPORT_ENABLED: ${{ vars.FINAL_REPORT_ENABLED || 'true' }}

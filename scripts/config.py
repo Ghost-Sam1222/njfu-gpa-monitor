@@ -49,6 +49,24 @@ def parse_csv(value: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in re.split(r"[,，\n]", value) if part.strip())
 
 
+def resolve_completion_mode(
+    mode: str,
+    expected_count: int,
+    expected_course_names: tuple[str, ...],
+) -> str:
+    if mode not in {"count", "names", "date"}:
+        raise ConfigError("COMPLETION_MODE must be count, names, or date.")
+    # Migrate an early setup-wizard bug that saved count + 0 while also
+    # preserving a valid course list. Existing deployments then heal on update.
+    if mode == "count" and expected_count < 1 and expected_course_names:
+        return "names"
+    if mode == "count" and expected_count < 1:
+        raise ConfigError("EXPECTED_GRADE_COUNT must be at least 1 in count mode.")
+    if mode == "names" and not expected_course_names:
+        raise ConfigError("EXPECTED_COURSE_NAMES is required in names mode.")
+    return mode
+
+
 def infer_semester(today: date) -> str:
     if today.month >= 8:
         return f"{today.year}-{today.year + 1}-1"
@@ -112,16 +130,15 @@ def load_settings() -> Settings:
         raise ConfigError("; ".join(notification_errors))
     enabled = parse_bool(env("MONITOR_ENABLED", "true"), True)
     monitor_until = parse_date(env("MONITOR_UNTIL"))
-    completion_mode = env("COMPLETION_MODE", "count")
+    completion_mode = env("COMPLETION_MODE", "date")
     expected_course_names = parse_csv(env("EXPECTED_COURSE_NAMES"))
-    if completion_mode not in {"count", "names", "date"}:
-        raise ConfigError("COMPLETION_MODE must be count, names, or date.")
+    completion_mode = resolve_completion_mode(
+        completion_mode,
+        expected_count,
+        expected_course_names,
+    )
     if enabled and monitor_until is None:
         raise ConfigError("MONITOR_UNTIL is required while monitoring is enabled.")
-    if completion_mode == "count" and expected_count < 1:
-        raise ConfigError("EXPECTED_GRADE_COUNT must be at least 1 in count mode.")
-    if completion_mode == "names" and not expected_course_names:
-        raise ConfigError("EXPECTED_COURSE_NAMES is required in names mode.")
     return Settings(
         base_url=env("JW_BASE_URL", DEFAULT_BASE_URL).rstrip("/"),
         username=username,
