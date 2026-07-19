@@ -5,6 +5,7 @@ import asyncio
 import re
 import sys
 import time
+import unicodedata
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -21,7 +22,8 @@ class MonitorError(RuntimeError):
 
 
 def normalized_name(value: str) -> str:
-    return re.sub(r"\s+", "", value).casefold()
+    normalized = unicodedata.normalize("NFKC", value)
+    return re.sub(r"\s+", "", normalized).casefold()
 
 
 def shanghai_today() -> date:

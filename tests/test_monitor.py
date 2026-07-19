@@ -95,6 +95,11 @@ class MonitorPolicyTests(unittest.TestCase):
         self.assertTrue(is_complete(configured, exact))
         self.assertFalse(is_complete(configured, similar))
 
+    def test_course_names_normalize_fullwidth_punctuation(self) -> None:
+        configured = replace(settings(), completion_mode="names", expected_course_names=("大学英语(4)",))
+        grades = [Grade(configured.semester, "1", "大学英语（4）", "90", "1", "4", "必修")]
+        self.assertTrue(is_complete(configured, grades))
+
     def test_successful_channel_is_not_retried(self) -> None:
         notifications = NotificationSettings(
             bark_device_key="bark-key",
