@@ -169,6 +169,16 @@ def has_notification_channel(names: set[str]) -> bool:
     return any(group.issubset(names) for group in complete_groups)
 
 
+def normalize_completion_variables(variables: dict[object, object]) -> tuple[str, str, str]:
+    mode = str(variables.get("COMPLETION_MODE", "date")).strip()
+    expected_count = str(variables.get("EXPECTED_GRADE_COUNT", "")).strip()
+    expected_names = str(variables.get("EXPECTED_COURSE_NAMES", "")).strip()
+    if mode == "count" and (not expected_count.isdigit() or int(expected_count) < 1) and expected_names:
+        mode = "names"
+        variables["COMPLETION_MODE"] = mode
+    return mode, expected_count, expected_names
+
+
 def detect_repository() -> str:
     result = subprocess.run(
         ["git", "remote", "get-url", "origin"],
@@ -380,9 +390,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         monitor_enabled = str(variables_payload.get("MONITOR_ENABLED", "false")) == "true"
         monitor_until = str(variables_payload.get("MONITOR_UNTIL", "")).strip()
-        completion_mode = str(variables_payload.get("COMPLETION_MODE", "date")).strip()
-        expected_count = str(variables_payload.get("EXPECTED_GRADE_COUNT", "")).strip()
-        expected_names = str(variables_payload.get("EXPECTED_COURSE_NAMES", "")).strip()
+        completion_mode, expected_count, expected_names = normalize_completion_variables(variables_payload)
         if monitor_enabled and not monitor_until:
             self._json(400, {"ok": False, "error": "启用监控时必须填写停止日期。"})
             return
@@ -465,10 +473,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             updated_variables.append(name)
 
-        if str(variables_payload.get("AUTO_UPDATE_ENABLED", "true")) == "true" and not enable_workflow_writes(repository):
+        if not enable_workflow_writes(repository):
             self._json(
                 400,
-                {"ok": False, "error": "配置已保存，但 GitHub 未允许维护工作流写回公开文件。请在仓库 Settings → Actions → General 中允许 Read and write permissions，然后再次完成配置。"},
+                {"ok": False, "error": "配置已保存，但 GitHub 未允许每月保活任务写回公开心跳文件。请在仓库 Settings → Actions → General 中允许 Read and write permissions，然后再次完成配置。"},
             )
             return
 

@@ -10,6 +10,7 @@ from setup_wizard import (
     enable_workflow_writes,
     has_notification_channel,
     incomplete_secret_groups,
+    normalize_completion_variables,
     suggested_repository,
     wait_for_workflow,
 )
@@ -67,6 +68,15 @@ class SetupWizardTests(unittest.TestCase):
     def test_requires_at_least_one_complete_notification_channel(self) -> None:
         self.assertFalse(has_notification_channel({"BARK_SERVER", "EMAIL_FROM"}))
         self.assertTrue(has_notification_channel({"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}))
+
+    def test_migrates_legacy_zero_count_when_course_names_exist(self) -> None:
+        variables = {
+            "COMPLETION_MODE": "count",
+            "EXPECTED_GRADE_COUNT": "0",
+            "EXPECTED_COURSE_NAMES": "课程A,课程B",
+        }
+        self.assertEqual(normalize_completion_variables(variables), ("names", "0", "课程A,课程B"))
+        self.assertEqual(variables["COMPLETION_MODE"], "names")
 
     @patch("setup_wizard.gh", return_value=SimpleNamespace(returncode=0))
     def test_enables_only_the_workflow_content_permission(self, mocked_gh) -> None:

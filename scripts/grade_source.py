@@ -13,7 +13,11 @@ class GradeSourceError(RuntimeError):
     pass
 
 
-ALLOWED_NJFU_HOSTS = {"jwxt.njfu.edu.cn", "authserver.njfu.edu.cn"}
+ALLOWED_NJFU_HOSTS = {
+    "jwxt.njfu.edu.cn",
+    "authserver.njfu.edu.cn",
+    "uia.njfu.edu.cn",
+}
 
 
 def _is_njfu_url(url: str) -> bool:

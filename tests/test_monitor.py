@@ -7,7 +7,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from check_grades import completion_summary, deliver_email, deliver_realtime, format_grades, is_complete, run
+from check_grades import (
+    completion_summary,
+    deliver_email,
+    deliver_realtime,
+    fetch_grades_with_retry,
+    format_grades,
+    is_complete,
+    run,
+)
 from grade_source import GradeSourceError
 from config import Settings
 from models import Grade
@@ -58,13 +66,27 @@ class MonitorPolicyTests(unittest.TestCase):
     def test_date_mode_completes_on_the_configured_stop_date(self) -> None:
         configured = replace(settings(), completion_mode="date")
         grades = [Grade(configured.semester, "1", "A", "90", "1", "4", "必修")]
-        with patch("check_grades.date") as mocked_date:
-            mocked_date.today.return_value = configured.monitor_until
+        with patch("check_grades.shanghai_today", return_value=configured.monitor_until):
             self.assertTrue(is_complete(configured, grades))
         self.assertEqual(
             completion_summary(configured, grades),
             "已到设定的监控截止日期。\n平均绩点：4.00",
         )
+
+    def test_date_mode_never_completes_an_empty_result(self) -> None:
+        configured = replace(settings(), completion_mode="date")
+        with patch("check_grades.shanghai_today", return_value=configured.monitor_until):
+            self.assertFalse(is_complete(configured, []))
+
+    def test_source_retry_recovers_from_a_transient_failure(self) -> None:
+        item = Grade("2025-2026-2", "1", "课程A", "90", "1", "4", "必修")
+        with patch(
+            "check_grades.fetch_grades",
+            side_effect=[GradeSourceError("temporary"), [item]],
+        ) as fetch, patch("check_grades.time.sleep") as sleep:
+            self.assertEqual(fetch_grades_with_retry(settings()), [item])
+        self.assertEqual(fetch.call_count, 2)
+        sleep.assert_called_once_with(3)
 
     def test_course_names_match_exactly_after_whitespace_normalization(self) -> None:
         configured = replace(settings(), completion_mode="names", expected_course_names=("高等 数学",))
@@ -119,7 +141,7 @@ class MonitorPolicyTests(unittest.TestCase):
                 notifications=NotificationSettings(bark_device_key="bark-key"),
             )
             with patch("check_grades.load_settings", return_value=configured), patch(
-                "check_grades.fetch_grades", side_effect=GradeSourceError("login unavailable")
+                "check_grades.fetch_grades_with_retry", side_effect=GradeSourceError("login unavailable")
             ), patch("check_grades.deliver_health_alert") as alert:
                 for _ in range(3):
                     with self.assertRaises(GradeSourceError):

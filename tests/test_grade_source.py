@@ -41,6 +41,9 @@ class GradeSourceTests(unittest.TestCase):
         with self.assertRaises(GradeSourceError):
             _require_njfu_url("https://unapproved.njfu.edu.cn/authserver/login")
 
+    def test_accepts_current_njfu_unified_authentication_host(self) -> None:
+        _require_njfu_url("https://uia.njfu.edu.cn/authserver/login")
+
 
 if __name__ == "__main__":
     unittest.main()

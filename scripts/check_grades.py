@@ -4,7 +4,9 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
-from datetime import date
+import time
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from config import ConfigError, Settings, load_settings
 from grade_source import GradeSourceError, fetch_grades
@@ -22,6 +24,10 @@ def normalized_name(value: str) -> str:
     return re.sub(r"\s+", "", value).casefold()
 
 
+def shanghai_today() -> date:
+    return datetime.now(ZoneInfo("Asia/Shanghai")).date()
+
+
 def is_complete(settings: Settings, grades: list[Grade]) -> bool:
     if settings.completion_mode == "names":
         names = {normalized_name(grade.course_name) for grade in grades}
@@ -29,11 +35,11 @@ def is_complete(settings: Settings, grades: list[Grade]) -> bool:
         return expected.issubset(names)
     if settings.completion_mode == "count":
         return len(grades) >= settings.expected_grade_count
-    return bool(settings.monitor_until and date.today() >= settings.monitor_until)
+    return bool(grades and settings.monitor_until and shanghai_today() >= settings.monitor_until)
 
 
 def should_skip(settings: Settings, state: MonitorState) -> bool:
-    today = date.today()
+    today = shanghai_today()
     if not settings.enabled:
         print("Monitor disabled.")
         return True
@@ -44,6 +50,22 @@ def should_skip(settings: Settings, state: MonitorState) -> bool:
         print("Monitor has passed its stop date.")
         return True
     return False
+
+
+def fetch_grades_with_retry(
+    settings: Settings,
+    attempts: int = 3,
+    delay_seconds: float = 3,
+) -> list[Grade]:
+    for attempt in range(1, attempts + 1):
+        try:
+            return asyncio.run(fetch_grades(settings))
+        except GradeSourceError:
+            if attempt == attempts:
+                raise
+            print(f"JWXT attempt {attempt} failed; retrying.", file=sys.stderr)
+            time.sleep(delay_seconds)
+    raise AssertionError("unreachable")
 
 
 def format_grades(grades: list[Grade], average_gpa: float | None = None) -> str:
@@ -176,10 +198,10 @@ def run() -> None:
         raise MonitorError("Configure at least one notification channel.")
 
     try:
-        grades = asyncio.run(fetch_grades(settings))
+        grades = fetch_grades_with_retry(settings)
     except GradeSourceError:
         state.consecutive_failures += 1
-        if state.consecutive_failures in {3, 6}:
+        if state.consecutive_failures >= 3 and state.consecutive_failures % 3 == 0:
             deliver_health_alert(settings, state.consecutive_failures)
         save_state(settings.state_path, state)
         raise
