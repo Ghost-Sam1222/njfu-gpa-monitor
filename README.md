@@ -2,6 +2,12 @@
 
 南京林业大学教务系统低频成绩监控。项目使用 GitHub Actions 定时登录 JWXT，发现新增或更正成绩后推送通知；达到邮件批量阈值或本学期成绩全部到齐时，发送一份可排序的简洁 HTML 成绩单。
 
+## 零基础云端配置教程
+
+https://github.com/user-attachments/assets/fdc31868-e278-4724-ba8d-0104076161b8
+
+部署个人监控时，请通过公开模板创建一个新的 **Private 仓库**，不要使用普通 Fork。账号、密码和通知密钥只写入个人仓库的 GitHub Secrets。
+
 [打开网页，开始云端配置](https://ghost-sam1222.github.io/njfu-gpa-monitor/) · [先选适合你的通知渠道](https://ghost-sam1222.github.io/njfu-gpa-monitor/channels.html)
 
 ## 功能
@@ -20,7 +26,7 @@
 
 ## 一键云端设置
 
-打开[云端配置页](https://ghost-sam1222.github.io/njfu-gpa-monitor/)，输入自己的 GitHub 用户名，然后依次点击两个按钮。第一个按钮通过 GitHub 官方模板创建个人仓库，第二个按钮启动该仓库的临时 Codespace，随后自动打开设置页。用户只需要：
+打开[云端配置页](https://ghost-sam1222.github.io/njfu-gpa-monitor/)，输入自己的 GitHub 用户名，然后依次点击两个按钮。第一个按钮通过 GitHub 官方模板创建新的 Private 个人仓库，第二个按钮启动该仓库的临时 Codespace，随后自动打开设置页。用户只需要：
 
 1. 验证教务账号和指定学期是否能正常查询。
 2. 选择检查频率、停止日期和成绩完成条件。
