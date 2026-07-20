@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -16,6 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from grade_source import GradeSourceError, fetch_grades
 from config import infer_semester
@@ -63,7 +67,6 @@ VARIABLE_NAMES = {
     "BARK_GROUP",
     "BARK_SOUND",
     "BARK_ICON",
-    "AUTO_UPDATE_ENABLED",
 }
 
 
@@ -82,19 +85,86 @@ def repository_variables(repository: str) -> dict[str, str]:
     }
 
 
-def enable_workflow_writes(repository: str) -> bool:
-    """Enable repository content writes for the explicitly scoped maintenance jobs."""
+def restrict_default_workflow_permissions(repository: str) -> bool:
+    """Keep the repository token read-only unless a job explicitly requests writes."""
     result = gh(
         "api",
         "--method",
         "PUT",
         f"repos/{repository}/actions/permissions/workflow",
         "-f",
-        "default_workflow_permissions=write",
+        "default_workflow_permissions=read",
         "-F",
         "can_approve_pull_request_reviews=false",
     )
     return result.returncode == 0
+
+
+def login_digest(username: str, password: str, cookie: str, semester: str) -> str:
+    payload = json.dumps(
+        [username.strip(), password.strip(), cookie.strip(), semester.strip()],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def login_configuration_error(
+    existing_names: set[str],
+    submitted: dict[object, object],
+    semester: str,
+    verified_digest: str,
+    existing_semester: str = "",
+) -> str:
+    username = str(submitted.get("JW_USERNAME", "")).strip()
+    password = str(submitted.get("JW_PASSWORD", "")).strip()
+    cookie = str(submitted.get("JW_COOKIE", "")).strip()
+    submitted_any = bool(username or password or cookie)
+    submitted_complete = bool(cookie or (username and password))
+    existing_complete = "JW_COOKIE" in existing_names or {
+        "JW_USERNAME",
+        "JW_PASSWORD",
+    }.issubset(existing_names)
+    if submitted_any and not submitted_complete:
+        return "请完整填写账号和密码，或填写 Cookie。"
+    if not submitted_complete and not existing_complete:
+        return "请填写教务登录信息并先点击“验证教务登录”。"
+    if existing_semester and semester != existing_semester and not submitted_complete:
+        return "学期已变更，请重新填写教务登录信息并验证新学期。"
+    if submitted_complete and not hmac.compare_digest(
+        login_digest(username, password, cookie, semester),
+        verified_digest,
+    ):
+        return "教务登录信息或学期尚未验证，请先点击“验证教务登录”。"
+    return ""
+
+
+def telegram_chat_ids(token: str) -> list[dict[str, str]]:
+    if not re.fullmatch(r"[0-9]{5,}:[A-Za-z0-9_-]{20,}", token.strip()):
+        raise ValueError("Telegram Bot Token 格式不正确。")
+    request = Request(
+        f"https://api.telegram.org/bot{token.strip()}/getUpdates",
+        headers={"User-Agent": "njfu-gpa-monitor/1.0"},
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, OSError, TimeoutError, json.JSONDecodeError) as exc:
+        raise ValueError(f"无法读取 Telegram 消息：{type(exc).__name__}") from exc
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        raise ValueError("Telegram 拒绝了请求，请检查 Bot Token。")
+    chats: dict[str, str] = {}
+    for update in payload.get("result", []):
+        if not isinstance(update, dict):
+            continue
+        message = update.get("message") or update.get("channel_post") or {}
+        chat = message.get("chat") if isinstance(message, dict) else None
+        if not isinstance(chat, dict) or "id" not in chat:
+            continue
+        chat_id = str(chat["id"])
+        label = str(chat.get("title") or chat.get("username") or chat.get("first_name") or chat_id)
+        chats[chat_id] = label
+    return [{"id": chat_id, "label": label} for chat_id, label in chats.items()]
 
 
 def latest_workflow_run(repository: str, workflow: str) -> dict[str, object] | None:
@@ -229,6 +299,7 @@ class SetupServer(ThreadingHTTPServer):
     csrf_token: str
     cloud: bool
     trusted_cloud_host: str
+    verified_login_digest: str
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -316,7 +387,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._is_trusted_request():
             self.send_error(403)
             return
-        if self.path not in {"/api/apply", "/api/verify-jw"}:
+        if self.path not in {"/api/apply", "/api/verify-jw", "/api/telegram-chat-id"}:
             self.send_error(404)
             return
         if self.headers.get("X-CSRF-Token") != self.server.csrf_token:
@@ -333,6 +404,17 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not isinstance(payload, dict):
             self._json(400, {"ok": False, "error": "Invalid configuration payload."})
+            return
+        if self.path == "/api/telegram-chat-id":
+            try:
+                chats = telegram_chat_ids(str(payload.get("token", "")))
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            if not chats:
+                self._json(400, {"ok": False, "error": "请先给机器人发送一条消息，再点击获取。"})
+                return
+            self._json(200, {"ok": True, "chats": chats})
             return
         if self.path == "/api/verify-jw":
             username = str(payload.get("username", "")).strip()
@@ -357,6 +439,7 @@ class Handler(BaseHTTPRequestHandler):
             except GradeSourceError as exc:
                 self._json(400, {"ok": False, "error": str(exc)})
                 return
+            self.server.verified_login_digest = login_digest(username, password, cookie, semester)
             self._json(200, {"ok": True})
             return
         repository = str(payload.get("repository", "")).strip()
@@ -417,6 +500,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"ok": False, "error": "Failed to inspect existing Secrets."})
             return
         existing_names = set(existing.stdout.splitlines())
+        existing_variables = repository_variables(repository)
+        login_error = login_configuration_error(
+            existing_names,
+            secrets_payload,
+            str(variables_payload.get("JW_SEMESTER", "")),
+            self.server.verified_login_digest,
+            existing_variables.get("JW_SEMESTER", ""),
+        )
+        if login_error:
+            self._json(400, {"ok": False, "error": login_error})
+            return
         submitted_names = {
             name
             for name, value in secrets_payload.items()
@@ -454,7 +548,6 @@ class Handler(BaseHTTPRequestHandler):
                 return
             updated_secrets.append(name)
 
-        existing_variables = repository_variables(repository)
         for name, raw_value in variables_payload.items():
             value = str(raw_value).strip()
             if name not in VARIABLE_NAMES:
@@ -473,10 +566,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             updated_variables.append(name)
 
-        if not enable_workflow_writes(repository):
+        if not restrict_default_workflow_permissions(repository):
             self._json(
                 400,
-                {"ok": False, "error": "配置已保存，但 GitHub 未允许每月保活任务写回公开心跳文件。请在仓库 Settings → Actions → General 中允许 Read and write permissions，然后再次完成配置。"},
+                {"ok": False, "error": "配置已保存，但无法把仓库默认工作流权限限制为只读。请检查仓库 Actions 设置后重试。"},
             )
             return
 
@@ -539,6 +632,7 @@ def main() -> None:
     server.csrf_token = secrets.token_urlsafe(32)
     server.cloud = is_cloud
     server.trusted_cloud_host = codespace_host(server.server_port) if is_cloud else ""
+    server.verified_login_digest = ""
     url = (
         f"https://{server.trusted_cloud_host}/"
         if server.trusted_cloud_host

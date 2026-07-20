@@ -23,17 +23,6 @@ class BarkConfig:
     archive: bool = True
 
 
-def describe_config(config: BarkConfig) -> str:
-    parsed = urlparse(config.server)
-    host = parsed.hostname or "set"
-    return (
-        f"server={host} "
-        f"group={config.group or 'unset'} "
-        f"sound={config.sound or 'unset'} "
-        f"icon={'set' if config.icon else 'unset'}"
-    )
-
-
 def normalize_icon_url(icon: str) -> str:
     parsed = urlparse(icon)
     if parsed.hostname != "raw.githubusercontent.com":

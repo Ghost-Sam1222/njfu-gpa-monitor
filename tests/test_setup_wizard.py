@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from setup_wizard import (
     cloud_target_allowed,
     codespace_host,
-    enable_workflow_writes,
     has_notification_channel,
     incomplete_secret_groups,
+    login_configuration_error,
+    login_digest,
     normalize_completion_variables,
+    restrict_default_workflow_permissions,
     suggested_repository,
+    telegram_chat_ids,
     wait_for_workflow,
 )
 
@@ -79,10 +82,40 @@ class SetupWizardTests(unittest.TestCase):
         self.assertEqual(variables["COMPLETION_MODE"], "names")
 
     @patch("setup_wizard.gh", return_value=SimpleNamespace(returncode=0))
-    def test_enables_only_the_workflow_content_permission(self, mocked_gh) -> None:
-        self.assertTrue(enable_workflow_writes("reader/repo"))
+    def test_restricts_default_workflow_permissions(self, mocked_gh) -> None:
+        self.assertTrue(restrict_default_workflow_permissions("reader/repo"))
         self.assertIn("repos/reader/repo/actions/permissions/workflow", mocked_gh.call_args.args)
-        self.assertIn("default_workflow_permissions=write", mocked_gh.call_args.args)
+        self.assertIn("default_workflow_permissions=read", mocked_gh.call_args.args)
+
+    def test_new_login_must_be_complete_and_verified(self) -> None:
+        submitted = {"JW_USERNAME": "student", "JW_PASSWORD": "password", "JW_COOKIE": ""}
+        self.assertTrue(login_configuration_error(set(), submitted, "2026-2027-1", ""))
+        verified = login_digest("student", "password", "", "2026-2027-1")
+        self.assertEqual(
+            login_configuration_error(set(), submitted, "2026-2027-1", verified),
+            "",
+        )
+        self.assertTrue(login_configuration_error(set(), submitted, "2026-2027-2", verified))
+
+    def test_existing_login_can_be_kept_without_reentering_it(self) -> None:
+        existing = {"JW_USERNAME", "JW_PASSWORD"}
+        self.assertEqual(
+            login_configuration_error(existing, {}, "2026-2027-1", "", "2026-2027-1"),
+            "",
+        )
+        self.assertTrue(
+            login_configuration_error(existing, {}, "2026-2027-2", "", "2026-2027-1")
+        )
+
+    @patch("setup_wizard.urlopen")
+    def test_discovers_telegram_chat_without_exposing_token_to_browser(self, mocked_urlopen) -> None:
+        response = MagicMock()
+        response.read.return_value = b'{"ok":true,"result":[{"message":{"chat":{"id":42,"first_name":"Reader"}}}]}'
+        mocked_urlopen.return_value.__enter__.return_value = response
+        self.assertEqual(
+            telegram_chat_ids("12345:abcdefghijklmnopqrstuvwxyz"),
+            [{"id": "42", "label": "Reader"}],
+        )
 
     @patch("setup_wizard.time.sleep")
     @patch("setup_wizard.latest_workflow_run")

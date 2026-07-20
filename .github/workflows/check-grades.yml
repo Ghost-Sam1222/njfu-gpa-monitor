@@ -89,13 +89,13 @@ jobs:
           MONITOR_UNTIL: ${{ vars.MONITOR_UNTIL }}
           CHECK_START_DATE: ${{ vars.CHECK_START_DATE }}
         run: |
-          if [ -z "$JW_SEMESTER" ]; then
-            echo "::error::JW_SEMESTER is required"
-            exit 1
-          fi
           if [ "$MONITOR_ENABLED" != "true" ]; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          if [ -z "$JW_SEMESTER" ]; then
+            echo "::error::JW_SEMESTER is required"
+            exit 1
           fi
           today="$(TZ=Asia/Shanghai date +%F)"
           if [ -n "$CHECK_START_DATE" ] && [ "$today" \< "$CHECK_START_DATE" ]; then
