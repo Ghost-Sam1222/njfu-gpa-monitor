@@ -4,7 +4,7 @@
 
 ## 零基础云端配置教程
 
-https://github.com/user-attachments/assets/fdc31868-e278-4724-ba8d-0104076161b8
+https://github.com/user-attachments/assets/09fe3f6a-d11d-426c-9fc4-bf6398ec6ccd
 
 部署个人监控时，请通过模板创建新仓库，不要使用普通 Fork。推荐选择 **Private**；若希望使用免费的公开仓库标准 Actions，也可以选择 **Public**，但 Variables 和运行日志会公开。账号、密码和通知密钥只写入 GitHub Secrets。
 
