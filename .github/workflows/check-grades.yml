@@ -12,8 +12,13 @@ on:
     - cron: "53 3 1 * *"
   workflow_dispatch:
     inputs:
+      force_check:
+        description: Run once even when monitoring is disabled or outside the date window
+        required: false
+        default: true
+        type: boolean
       reset_state:
-        description: Reset this semester baseline before checking
+        description: Rebuild this semester baseline (does not resend current grades)
         required: false
         default: false
         type: boolean
@@ -84,29 +89,55 @@ jobs:
       - name: Preflight
         id: preflight
         env:
+          FORCE_CHECK: ${{ github.event_name == 'workflow_dispatch' && inputs.force_check }}
           MONITOR_ENABLED: ${{ vars.MONITOR_ENABLED || 'false' }}
           JW_SEMESTER: ${{ vars.JW_SEMESTER }}
           MONITOR_UNTIL: ${{ vars.MONITOR_UNTIL }}
           CHECK_START_DATE: ${{ vars.CHECK_START_DATE }}
         run: |
-          if [ "$MONITOR_ENABLED" != "true" ]; then
+          skip_check() {
+            reason="$1"
             echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "force_check=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=本次未查询成绩::$reason"
+            {
+              echo "### 本次未查询成绩"
+              echo
+              echo "$reason"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          if [ "$FORCE_CHECK" != "true" ] && [ "$MONITOR_ENABLED" != "true" ]; then
+            skip_check "监控开关 MONITOR_ENABLED 当前不是 true。"
             exit 0
           fi
           if [ -z "$JW_SEMESTER" ]; then
             echo "::error::JW_SEMESTER is required"
             exit 1
           fi
+          if [ "$FORCE_CHECK" = "true" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "force_check=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=手动强制检查::本次将忽略监控开关和起止日期，实际登录教务系统查询一次。"
+            {
+              echo "### 手动强制检查"
+              echo
+              echo "已忽略监控开关和起止日期，将实际登录教务系统查询一次。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           today="$(TZ=Asia/Shanghai date +%F)"
           if [ -n "$CHECK_START_DATE" ] && [ "$today" \< "$CHECK_START_DATE" ]; then
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            skip_check "北京时间 $today 早于开始日期 $CHECK_START_DATE。"
             exit 0
           fi
           if [ -n "$MONITOR_UNTIL" ] && [ "$today" \> "$MONITOR_UNTIL" ]; then
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            skip_check "北京时间 $today 晚于停止日期 $MONITOR_UNTIL。手动运行时可勾选 force_check 强制查询一次。"
             exit 0
           fi
           echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "force_check=false" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
         if: steps.preflight.outputs.should_run == 'true'
@@ -149,6 +180,7 @@ jobs:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           EMAIL_SMTP_SERVER: ${{ secrets.EMAIL_SMTP_SERVER }}
           EMAIL_SMTP_PORT: ${{ secrets.EMAIL_SMTP_PORT }}
+          FORCE_CHECK: ${{ steps.preflight.outputs.force_check || 'false' }}
           MONITOR_ENABLED: ${{ vars.MONITOR_ENABLED || 'false' }}
           MONITOR_UNTIL: ${{ vars.MONITOR_UNTIL }}
           CHECK_START_DATE: ${{ vars.CHECK_START_DATE }}

@@ -92,6 +92,7 @@ class Settings:
     cookie: str
     semester: str
     enabled: bool
+    force_check: bool
     monitor_until: date | None
     check_start_date: date | None
     expected_course_names: tuple[str, ...]
@@ -146,6 +147,7 @@ def load_settings() -> Settings:
         cookie=cookie,
         semester=env("JW_SEMESTER", infer_semester(date.today())),
         enabled=enabled,
+        force_check=parse_bool(env("FORCE_CHECK"), False),
         monitor_until=monitor_until,
         check_start_date=parse_date(env("CHECK_START_DATE")),
         expected_course_names=expected_course_names,

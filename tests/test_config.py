@@ -22,6 +22,12 @@ def base_environment() -> dict[str, str]:
 
 
 class ConfigTests(unittest.TestCase):
+    def test_force_check_is_opt_in_outside_the_workflow(self) -> None:
+        environment = base_environment()
+        environment["FORCE_CHECK"] = "true"
+        with patch.dict(os.environ, environment, clear=True):
+            self.assertTrue(load_settings().force_check)
+
     def test_enabled_monitor_requires_stop_date(self) -> None:
         environment = base_environment()
         environment.pop("MONITOR_UNTIL")

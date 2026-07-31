@@ -15,6 +15,7 @@ from check_grades import (
     format_grades,
     is_complete,
     run,
+    should_skip,
 )
 from grade_source import GradeSourceError
 from config import Settings
@@ -31,6 +32,7 @@ def settings() -> Settings:
         cookie="",
         semester="2025-2026-2",
         enabled=True,
+        force_check=False,
         monitor_until=date(2026, 7, 31),
         check_start_date=None,
         expected_course_names=(),
@@ -47,6 +49,22 @@ def settings() -> Settings:
 
 
 class MonitorPolicyTests(unittest.TestCase):
+    def test_manual_force_check_ignores_switch_and_date_window(self) -> None:
+        configured = replace(
+            settings(),
+            enabled=False,
+            force_check=True,
+            check_start_date=date(2027, 1, 1),
+            monitor_until=date(2026, 1, 1),
+        )
+        with patch("check_grades.shanghai_today", return_value=date(2026, 7, 31)):
+            self.assertFalse(should_skip(configured))
+
+    def test_scheduled_check_still_obeys_stop_date(self) -> None:
+        configured = replace(settings(), monitor_until=date(2026, 7, 25))
+        with patch("check_grades.shanghai_today", return_value=date(2026, 7, 31)):
+            self.assertTrue(should_skip(configured))
+
     def test_realtime_message_keeps_compact_grade_format(self) -> None:
         grades = [Grade("2025-2026-2", "1", "体育（4）", "86", "1", "3.5", "必修")]
         self.assertEqual(

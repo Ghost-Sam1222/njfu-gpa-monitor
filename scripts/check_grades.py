@@ -40,8 +40,11 @@ def is_complete(settings: Settings, grades: list[Grade]) -> bool:
     return bool(grades and settings.monitor_until and shanghai_today() >= settings.monitor_until)
 
 
-def should_skip(settings: Settings, state: MonitorState) -> bool:
+def should_skip(settings: Settings) -> bool:
     today = shanghai_today()
+    if settings.force_check:
+        print("Manual force check enabled; monitor switch and date window are ignored.")
+        return False
     if not settings.enabled:
         print("Monitor disabled.")
         return True
@@ -193,7 +196,7 @@ def deliver_health_alert(settings: Settings, count: int) -> None:
 def run() -> None:
     settings = load_settings()
     state = load_state(settings.state_path, settings.semester)
-    if should_skip(settings, state):
+    if should_skip(settings):
         return
     channels = settings.notifications.realtime_channels()
     if not channels and not settings.notifications.email_enabled():
