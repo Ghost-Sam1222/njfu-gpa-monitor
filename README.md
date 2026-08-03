@@ -53,7 +53,7 @@ Codespaces 转发端口保持 Private，只有创建者登录 GitHub 后才能�
 | `CHECK_INTERVAL_HOURS` | `6` | 只能为 `2/3/6/12/24` |
 | `MONITOR_ENABLED` | `true` | 定时监控总开关 |
 | `CHECK_START_DATE` | `2026-12-20` | 可选，开始日期 |
-| `MONITOR_UNTIL` | `2027-02-28` | 启用监控时必填；这是硬截止，建议设为最后一门考试后至少 6 周或下学期开学前 |
+| `MONITOR_UNTIL` | `2027-02-10` | 启用监控时必填；这是硬截止，建议设为最后一场考试后 30 天 |
 | `COMPLETION_MODE` | `date` | `date`（默认，停止日期当天发最终成绩单）、`count` 或 `names` |
 | `EXPECTED_GRADE_COUNT` | `9` | `count` 模式必填，至少为 1 |
 | `EXPECTED_COURSE_NAMES` | `课程A,课程B` | `names` 模式必填，精确匹配全部课程 |
