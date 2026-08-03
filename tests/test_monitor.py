@@ -160,6 +160,7 @@ class MonitorPolicyTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             configured = replace(
                 settings(),
+                force_check=True,
                 state_path=Path(directory) / "state.json",
                 notifications=NotificationSettings(bark_device_key="bark-key"),
             )
