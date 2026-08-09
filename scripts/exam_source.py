@@ -262,17 +262,16 @@ async def _query_exam_project(
         raise ExamAuthenticationError("The NJFU login session expired during the exam query.")
     if not response.ok:
         raise ExamSourceError(f"The exam query returned HTTP {response.status}.")
+    result_frame = response.frame
     for _ in range(20):
-        result_frame = page.frame(name="fcenter")
-        if result_frame is not None:
-            rows = await result_frame.eval_on_selector_all(
-                "table tr",
-                """rows => rows.map(row =>
-                    Array.from(row.querySelectorAll('th,td')).map(cell => cell.innerText.trim())
-                )""",
-            )
-            if rows:
-                return _rows_to_html(rows)
+        rows = await result_frame.eval_on_selector_all(
+            "table tr",
+            """rows => rows.map(row =>
+                Array.from(row.querySelectorAll('th,td')).map(cell => cell.innerText.trim())
+            )""",
+        )
+        if rows:
+            return _rows_to_html(rows)
         await page.wait_for_timeout(250)
     return ""
 
