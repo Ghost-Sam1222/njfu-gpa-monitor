@@ -261,7 +261,11 @@ async def _query_exam_project(
         raise ExamAuthenticationError("The NJFU login session expired during the exam query.")
     if not response.ok:
         raise ExamSourceError(f"The exam query returned HTTP {response.status}.")
-    return await response.text()
+    await page.wait_for_timeout(300)
+    result_frame = page.frame(name="fcenter")
+    if result_frame is None:
+        raise ExamParseError("The exam result frame is unavailable.")
+    return await result_frame.content()
 
 
 def _normalize_text(value: Any) -> str:
