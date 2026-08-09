@@ -74,6 +74,12 @@ def _require_njfu_url(url: str) -> None:
         raise ExamSourceError("Refusing to send credentials outside approved NJFU HTTPS hosts.")
 
 
+def _is_login_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return host in {"authserver.njfu.edu.cn", "uia.njfu.edu.cn"} and "login" in parsed.path.lower()
+
+
 def _cookie_entries(cookie_header: str, base_url: str) -> list[dict[str, str]]:
     entries: list[dict[str, str]] = []
     for item in cookie_header.split(";"):
@@ -142,7 +148,7 @@ async def _fetch_exams(settings: ExamSettings) -> ExamFetchResult:
         page = await context.new_page()
         try:
             await page.goto(login_url, wait_until="domcontentloaded", timeout=60000)
-            if "authserver/login" in page.url:
+            if _is_login_url(page.url):
                 if not settings.username or not settings.password:
                     raise ExamAuthenticationError(
                         "JW_COOKIE expired; configure JW_USERNAME and JW_PASSWORD as fallback."
@@ -154,14 +160,14 @@ async def _fetch_exams(settings: ExamSettings) -> ExamFetchResult:
                 await page.wait_for_load_state("domcontentloaded", timeout=60000)
                 await page.wait_for_timeout(1200)
             _require_njfu_url(page.url)
-            if "authserver/login" in page.url:
+            if _is_login_url(page.url):
                 raise ExamAuthenticationError(
                     "Login did not complete; verify credentials or interactive verification requirements."
                 )
 
             await page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
             _require_njfu_url(page.url)
-            if "authserver/login" in page.url:
+            if _is_login_url(page.url):
                 raise ExamAuthenticationError("The NJFU login session expired before the exam query.")
 
             projects_text = await _fetch_exam_projects(page, base_url, settings.semester)
@@ -212,6 +218,7 @@ async def _fetch_exam_projects(page: Any, base_url: str, semester: str) -> str:
 
 
 def parse_exam_projects_text(text: str) -> list[ExamProject]:
+    text = text.lstrip("\ufeff")
     if _looks_like_login_page(text):
         raise ExamAuthenticationError("The NJFU login session expired during project discovery.")
     try:
@@ -349,8 +356,11 @@ def parse_exam_html(
 def _looks_like_login_page(html: str) -> bool:
     lower = html.lower()
     return (
-        'name="username"' in lower
-        and ('name="password"' in lower or 'id="password"' in lower)
+        (re.search(r"(?:name|id)\s*=\s*['\"]?username\b", lower) is not None)
+        and (re.search(r"(?:name|id)\s*=\s*['\"]?password\b", lower) is not None)
+    ) or (
+        ("统一身份认证" in html or "unified identity authentication" in lower)
+        and "login" in lower
     )
 
 
@@ -566,8 +576,8 @@ def _run_cli(argv: list[str] | None = None) -> int:
     except ExamAuthenticationError:
         print("error: NJFU authentication failed", file=sys.stderr)
         return 3
-    except ExamParseError:
-        print("error: NJFU exam response could not be parsed", file=sys.stderr)
+    except ExamParseError as exc:
+        print(f"error: NJFU exam response could not be parsed: {exc}", file=sys.stderr)
         return 4
     except ExamSourceError:
         print("error: NJFU exam query failed", file=sys.stderr)

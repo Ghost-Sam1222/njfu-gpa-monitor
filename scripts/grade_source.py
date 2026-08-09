@@ -31,6 +31,12 @@ def _require_njfu_url(url: str) -> None:
         raise GradeSourceError("Refusing to send credentials outside approved NJFU HTTPS hosts.")
 
 
+def _is_login_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return host in {"authserver.njfu.edu.cn", "uia.njfu.edu.cn"} and "login" in parsed.path.lower()
+
+
 def _cookie_entries(cookie_header: str, base_url: str) -> list[dict[str, str]]:
     entries: list[dict[str, str]] = []
     for item in cookie_header.split(";"):
@@ -76,7 +82,7 @@ async def _fetch_grades(settings: Settings) -> list[Grade]:
         page = await context.new_page()
         try:
             await page.goto(login_url, wait_until="domcontentloaded", timeout=60000)
-            if "authserver/login" in page.url:
+            if _is_login_url(page.url):
                 if not settings.username or not settings.password:
                     raise GradeSourceError("JW_COOKIE expired; configure JW_USERNAME and JW_PASSWORD as fallback.")
                 _require_njfu_url(page.url)
@@ -86,7 +92,7 @@ async def _fetch_grades(settings: Settings) -> list[Grade]:
                 await page.wait_for_load_state("domcontentloaded", timeout=60000)
                 await page.wait_for_timeout(1200)
             _require_njfu_url(page.url)
-            if "authserver/login" in page.url:
+            if _is_login_url(page.url):
                 raise GradeSourceError("Login did not complete; verify credentials or interactive verification requirements.")
 
             await page.goto(grade_url, wait_until="domcontentloaded", timeout=60000)

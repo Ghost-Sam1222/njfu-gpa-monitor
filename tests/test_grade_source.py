@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from grade_source import GradeSourceError, _require_njfu_url, has_grade_table, parse_grades_html
+from grade_source import GradeSourceError, _is_login_url, _require_njfu_url, has_grade_table, parse_grades_html
 
 
 class GradeSourceTests(unittest.TestCase):
+    def test_recognizes_current_njfu_login_urls(self) -> None:
+        self.assertTrue(_is_login_url("https://authserver.njfu.edu.cn/authserver/login"))
+        self.assertTrue(_is_login_url("https://uia.njfu.edu.cn/cas/login"))
+
     def test_parses_reordered_headers(self) -> None:
         html = """
         <table id="dataList">

@@ -16,6 +16,7 @@ from exam_source import (
     _infer_campus,
     _infer_exam_type,
     _infer_query_category,
+    _is_login_url,
     _parse_datetime_range,
     _run_cli,
     describe_result,
@@ -79,6 +80,15 @@ class ExamProjectTests(unittest.TestCase):
         with self.assertRaises(ExamParseError):
             parse_exam_projects_text("<html>server error</html>")
 
+    def test_accepts_utf8_bom_in_project_response(self) -> None:
+        projects = parse_exam_projects_text('\ufeff[{"kw0401id":"a","ksmc":"期末考试"}]')
+        self.assertEqual(projects, [ExamProject("a", "期末考试")])
+
+    def test_recognizes_both_njfu_login_hosts(self) -> None:
+        self.assertTrue(_is_login_url("https://authserver.njfu.edu.cn/authserver/login"))
+        self.assertTrue(_is_login_url("https://uia.njfu.edu.cn/cas/login"))
+        self.assertFalse(_is_login_url("https://jwxt.njfu.edu.cn/jsxsd/xsks/xsksap_query"))
+
 
 class ExamHTMLTests(unittest.TestCase):
     def test_parses_verified_njfu_table_shape(self) -> None:
@@ -132,6 +142,11 @@ class ExamHTMLTests(unittest.TestCase):
 
     def test_login_page_raises_authentication_error(self) -> None:
         html = '<form><input name="username"><input name="password"></form>'
+        with self.assertRaises(ExamAuthenticationError):
+            parse_exam_html(html, "2025-2026-2", "p", "期末考试")
+
+    def test_single_quoted_login_page_raises_authentication_error(self) -> None:
+        html = "<form><input name='username'><input id='password'></form>"
         with self.assertRaises(ExamAuthenticationError):
             parse_exam_html(html, "2025-2026-2", "p", "期末考试")
 
