@@ -22,6 +22,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from grade_source import GradeSourceError, fetch_grades
+from exam_source import ExamSourceError, suggestion_for_setup
 from config import infer_semester
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -387,7 +388,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._is_trusted_request():
             self.send_error(403)
             return
-        if self.path not in {"/api/apply", "/api/verify-jw", "/api/telegram-chat-id"}:
+        if self.path not in {"/api/apply", "/api/verify-jw", "/api/telegram-chat-id", "/api/exam-suggestion"}:
             self.send_error(404)
             return
         if self.headers.get("X-CSRF-Token") != self.server.csrf_token:
@@ -441,6 +442,31 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.server.verified_login_digest = login_digest(username, password, cookie, semester)
             self._json(200, {"ok": True})
+            return
+        if self.path == "/api/exam-suggestion":
+            username = str(payload.get("username", "")).strip()
+            password = str(payload.get("password", "")).strip()
+            cookie = str(payload.get("cookie", "")).strip()
+            semester = str(payload.get("semester", "")).strip()
+            if not semester or (not cookie and (not username or not password)):
+                self._json(400, {"ok": False, "error": "请填写学期和账号密码，或填写 Cookie。"})
+                return
+            try:
+                result = asyncio.run(
+                    suggestion_for_setup(
+                        SimpleNamespace(
+                            base_url="https://jwxt.njfu.edu.cn",
+                            username=username,
+                            password=password,
+                            cookie=cookie,
+                            semester=semester,
+                        )
+                    )
+                )
+            except (GradeSourceError, ExamSourceError) as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True, **result})
             return
         repository = str(payload.get("repository", "")).strip()
         if not REPOSITORY_PATTERN.fullmatch(repository):
@@ -573,7 +599,12 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        for workflow in ("check-grades.yml", "test-notifications.yml", "sync-upstream.yml"):
+        for workflow in (
+            "check-grades.yml",
+            "test-notifications.yml",
+            "query-exams.yml",
+            "sync-upstream.yml",
+        ):
             result = gh("workflow", "enable", workflow, "--repo", repository)
             if result.returncode != 0:
                 self._json(400, {"ok": False, "error": f"配置已保存，但无法启用工作流 {workflow}。"})

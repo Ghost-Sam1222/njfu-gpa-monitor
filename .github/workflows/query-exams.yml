@@ -1,0 +1,58 @@
+name: Query NJFU Exams
+
+on:
+  workflow_dispatch:
+    inputs:
+      semester:
+        description: Semester, for example 2026-2027-1; leave empty to use JW_SEMESTER
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  query:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install chromium
+
+      - name: Query private-safe exam summary
+        env:
+          JW_BASE_URL: ${{ vars.JW_BASE_URL || 'https://jwxt.njfu.edu.cn' }}
+          JW_USERNAME: ${{ secrets.JW_USERNAME }}
+          JW_PASSWORD: ${{ secrets.JW_PASSWORD }}
+          JW_COOKIE: ${{ secrets.JW_COOKIE }}
+          CONFIGURED_SEMESTER: ${{ vars.JW_SEMESTER }}
+          REQUESTED_SEMESTER: ${{ inputs.semester }}
+        run: |
+          semester="${REQUESTED_SEMESTER:-$CONFIGURED_SEMESTER}"
+          if [ -z "$semester" ]; then
+            echo "::error::Enter a semester or configure JW_SEMESTER."
+            exit 1
+          fi
+          set +e
+          summary="$(python scripts/exam_source.py --semester "$semester" --format summary)"
+          status=$?
+          set -e
+          {
+            echo "### NJFU exam query"
+            echo
+            echo '```json'
+            echo "$summary"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

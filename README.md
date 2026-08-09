@@ -33,6 +33,8 @@ https://github.com/user-attachments/assets/09fe3f6a-d11d-426c-9fc4-bf6398ec6ccd
 3. 配置任意通知渠道。
 4. 点击“完成配置”，写入 Secrets/Variables 并触发通知测试。
 
+“停止日期”旁的“读取考试安排”会调用项目内置考试 API，按所选学期读取教务系统发布的全部考试项目，包括不同校区、机考和纸笔考试。只有每个项目都成功解析且至少取得一场有日期的考试时，页面才允许采用“最后一场考试 + 30 天”；不完整结果不会覆盖人工日期，已有的更晚日期也会保留。考试安排只在用户点击时查询，不会增加每次成绩检查的请求量。
+
 Codespaces 转发端口保持 Private，只有创建者登录 GitHub 后才能访问；配置完成后可以删除该 Codespace。设置页不使用浏览器 Cookie 或 LocalStorage 保存表单，也会关闭教务密码自动填充；账号密码不会经过 GitHub Pages，也不会发送给项目作者。空白 Secret 不会覆盖仓库中已有值，重复设置不会轮换已有的 `GRADE_STATE_SALT`。删除渠道时，设置页会拒绝保存“一个通知渠道都没有”的状态。
 
 本地备用路径会自动准备隔离环境：macOS 双击 `setup-macos.command`，Linux 运行 `setup-linux.sh`，Windows 双击 `setup-windows.bat`。
@@ -112,6 +114,25 @@ Codespaces 转发端口保持 Private，只有创建者登录 GitHub 后才能�
 `Test Notifications` 只测试已配置的通知渠道，不登录教务系统。首次部署建议先运行它，再手动运行一次成绩检查建立基线。
 
 `Apply Upstream Fixes` 只支持手动触发。运行前先查看源仓库最近更新；它会替换公开程序、工作流和文档，但不会读取或修改 Secrets/Variables。一个稳定学期内通常不需要运行。
+
+## 考试安排 API 与 CLI
+
+考试安排的核心实现位于 `scripts/exam_source.py`。它使用南林强智教务系统当前接口动态读取指定学期的考试项目，再逐项查询安排；配置网页只调用这套实现，不维护第二份抓取逻辑。
+
+本地或 Codespace 中可直接使用 CLI。账号密码只从环境变量读取，不接受命令行参数，避免出现在终端历史和进程列表中：
+
+```bash
+export JW_USERNAME='你的学号'
+export JW_PASSWORD='你的密码'
+python scripts/exam_source.py --semester 2026-2027-1 --format summary
+python scripts/exam_source.py --semester 2026-2027-1 --format suggested
+```
+
+`summary` 只输出考试数量、项目数量、最晚日期和建议停止日期，适合日志；`latest` 只输出最后考试日，`suggested` 输出最后考试日加 30 天。`json` 会输出课程、时间和考场明细，仅应在自己的设备或私有 Codespace 中使用，不要复制到公开 Actions 日志。
+
+退出码：`0` 表示全部项目查询完成，`2` 表示存在未能解析的项目，`3` 表示缺少凭据或登录失败，`4` 表示响应格式无法解析，`5` 表示其他查询故障。项目列表为空或考试尚未发布时可能正常返回 `0`，但不会产生建议日期。
+
+不使用终端时，可以在 Actions 中手动运行 `Query NJFU Exams`，留空学期会读取 `JW_SEMESTER`。该工作流只把不含课程、考场和座位的摘要写入运行总结，不会定时执行，也不会修改 `MONITOR_UNTIL`。
 
 ## 本地开发
 

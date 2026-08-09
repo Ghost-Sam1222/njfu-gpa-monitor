@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This is a Python 3.12 grade monitor run by GitHub Actions. `scripts/check_grades.py` coordinates fetching, state comparison, and delivery. Keep focused logic in the existing modules: JWXT parsing in `grade_source.py`, configuration in `config.py`, notification payloads in `notifications.py`, reports in `report.py`, and persisted state in `state.py`. The guided setup UI is `setup/index.html`, served by `scripts/setup_wizard.py`; `.devcontainer/` starts its private Codespaces version. `docs/` contains the public GitHub Pages launcher. Tests live in `tests/`, workflows in `.github/workflows/`, and notification artwork in `assets/`. Do not track generated files under `data/` or `reports/`.
+This is a Python 3.12 grade monitor run by GitHub Actions. `scripts/check_grades.py` coordinates fetching, state comparison, and delivery. Keep focused logic in the existing modules: grade parsing in `grade_source.py`, exam API/CLI logic in `exam_source.py`, configuration in `config.py`, notification payloads in `notifications.py`, reports in `report.py`, and persisted state in `state.py`. The guided setup UI is `setup/index.html`, served by `scripts/setup_wizard.py`; `.devcontainer/` starts its private Codespaces version. `docs/` contains the public GitHub Pages launcher. Tests live in `tests/`, workflows in `.github/workflows/`, and notification artwork in `assets/`. Do not track generated files under `data/` or `reports/`.
 
 ## Build, Test, and Development Commands
 

@@ -38,6 +38,21 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", trigger)
         self.assertNotIn("schedule:", trigger)
 
+    def test_exam_query_is_manual_and_read_only(self) -> None:
+        workflow = (ROOT / ".github/workflows/query-exams.yml").read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotIn("schedule:", workflow)
+        self.assertIn("contents: read", workflow)
+        self.assertIn("--format summary", workflow)
+        self.assertNotIn("--format json", workflow)
+
+    def test_ci_ignores_monthly_keepalive_commit(self) -> None:
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        self.assertIn("pull_request:", workflow)
+        self.assertIn("paths-ignore:", workflow)
+        self.assertIn(".github/monitor-heartbeat", workflow)
+        self.assertIn("python-version: \"3.12\"", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
