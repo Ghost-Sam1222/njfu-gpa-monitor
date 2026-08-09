@@ -20,6 +20,7 @@ from exam_source import (
     _is_login_url,
     _parse_datetime_range,
     _run_cli,
+    _rows_to_html,
     _safe_failure_reason,
     describe_result,
     parse_exam_html,
@@ -113,6 +114,15 @@ class ExamRequestTests(unittest.IsolatedAsyncioTestCase):
             await _discover_exam_projects(page, "2025-2026-2")
 
 class ExamHTMLTests(unittest.TestCase):
+    def test_rendered_rows_round_trip_through_parser(self) -> None:
+        html = _rows_to_html([
+            ["课程编号", "课程名称", "考试时间", "考场"],
+            ["T1", "测试<&课程", "2026-07-10 10:15~12:15", "B101"],
+        ])
+        exams, recognized = parse_exam_html(html, "2025-2026-2", "p", "期末考试")
+        self.assertTrue(recognized)
+        self.assertEqual(exams[0].course_name, "测试<&课程")
+
     def test_parses_verified_njfu_table_shape(self) -> None:
         html = """
         <table id="dataList">

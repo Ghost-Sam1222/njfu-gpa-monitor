@@ -8,6 +8,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta
+from html import escape
 from html.parser import HTMLParser
 from types import SimpleNamespace
 from typing import Any, Protocol
@@ -261,15 +262,27 @@ async def _query_exam_project(
         raise ExamAuthenticationError("The NJFU login session expired during the exam query.")
     if not response.ok:
         raise ExamSourceError(f"The exam query returned HTTP {response.status}.")
-    last_html = ""
     for _ in range(20):
         result_frame = page.frame(name="fcenter")
         if result_frame is not None:
-            last_html = await result_frame.content()
-            if any(marker in last_html for marker in ("课程名称", "未查询到数据", "暂无数据")):
-                return last_html
+            rows = await result_frame.eval_on_selector_all(
+                "table tr",
+                """rows => rows.map(row =>
+                    Array.from(row.querySelectorAll('th,td')).map(cell => cell.innerText.trim())
+                )""",
+            )
+            if rows:
+                return _rows_to_html(rows)
         await page.wait_for_timeout(250)
-    return last_html
+    return ""
+
+
+def _rows_to_html(rows: list[list[str]]) -> str:
+    rendered_rows = []
+    for row in rows:
+        cells = "".join(f"<td>{escape(str(cell))}</td>" for cell in row)
+        rendered_rows.append(f"<tr>{cells}</tr>")
+    return f"<table>{''.join(rendered_rows)}</table>"
 
 
 def _normalize_text(value: Any) -> str:
