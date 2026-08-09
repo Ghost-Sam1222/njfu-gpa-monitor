@@ -6,7 +6,7 @@ import unittest
 from contextlib import redirect_stdout
 from contextlib import redirect_stderr
 from datetime import date, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from exam_source import (
     ExamAuthenticationError,
@@ -16,7 +16,7 @@ from exam_source import (
     _infer_campus,
     _infer_exam_type,
     _infer_query_category,
-    _fetch_exam_projects,
+    _discover_exam_projects,
     _is_login_url,
     _parse_datetime_range,
     _run_cli,
@@ -92,31 +92,24 @@ class ExamProjectTests(unittest.TestCase):
 
 
 class ExamRequestTests(unittest.IsolatedAsyncioTestCase):
-    async def test_project_discovery_matches_verified_jquery_ajax(self) -> None:
-        page = AsyncMock()
-        page.evaluate.return_value = {
-            "body": "[]",
-            "url": "https://jwxt.njfu.edu.cn/jsxsd/xsks/xsksap_ksmc?xnxqid=2025-2026-2",
-            "contentType": "application/json;charset=UTF-8",
-        }
-        body, response_type = await _fetch_exam_projects(
-            page, "https://jwxt.njfu.edu.cn", "2025-2026-2"
-        )
-        script = page.evaluate.await_args.args[0]
-        self.assertIn("method: 'POST'", script)
-        self.assertIn("X-Requested-With", script)
-        self.assertEqual(body, "[]")
-        self.assertEqual(response_type, "application/json;charset=UTF-8")
+    async def test_project_discovery_uses_school_page_loader(self) -> None:
+        page = MagicMock()
+        page.locator.return_value.count = AsyncMock(return_value=1)
+        page.select_option = AsyncMock(return_value=["2025-2026-2"])
+        page.evaluate = AsyncMock()
+        page.wait_for_timeout = AsyncMock()
+        page.eval_on_selector_all = AsyncMock(return_value=[
+            {"kw0401id": "p1", "ksmc": "期末考试（新庄校区）"}
+        ])
+        projects = await _discover_exam_projects(page, "2025-2026-2")
+        self.assertEqual(projects, [ExamProject("p1", "期末考试（新庄校区）")])
+        self.assertIn("onckKsmc", page.evaluate.await_args.args[0])
 
-    async def test_project_discovery_detects_login_redirect(self) -> None:
-        page = AsyncMock()
-        page.evaluate.return_value = {
-            "body": "<html></html>",
-            "url": "https://uia.njfu.edu.cn/cas/login",
-            "contentType": "text/html",
-        }
+    async def test_project_discovery_requires_exam_form(self) -> None:
+        page = MagicMock()
+        page.locator.return_value.count = AsyncMock(return_value=0)
         with self.assertRaises(ExamAuthenticationError):
-            await _fetch_exam_projects(page, "https://jwxt.njfu.edu.cn", "2025-2026-2")
+            await _discover_exam_projects(page, "2025-2026-2")
 
 
 class ExamHTMLTests(unittest.TestCase):

@@ -60,7 +60,6 @@ ALLOWED_NJFU_HOSTS = {
     "uia.njfu.edu.cn",
 }
 EXAM_QUERY_PATH = "/jsxsd/xsks/xsksap_query"
-EXAM_PROJECTS_PATH = "/jsxsd/xsks/xsksap_ksmc"
 EXAM_LIST_PATH = "/jsxsd/xsks/xsksap_list"
 
 
@@ -170,12 +169,7 @@ async def _fetch_exams(settings: ExamSettings) -> ExamFetchResult:
             if _is_login_url(page.url):
                 raise ExamAuthenticationError("The NJFU login session expired before the exam query.")
 
-            projects_text, response_type = await _fetch_exam_projects(page, base_url, settings.semester)
-            try:
-                projects = parse_exam_projects_text(projects_text)
-            except ExamParseError as exc:
-                safe_type = response_type.split(";", 1)[0] or "unknown"
-                raise ExamParseError(f"{exc} Response type: {safe_type}.") from exc
+            projects = await _discover_exam_projects(page, settings.semester)
             exams: list[Exam] = []
             failed: list[ExamProject] = []
             seen_keys: set[str] = set()
@@ -207,27 +201,30 @@ async def _fetch_exams(settings: ExamSettings) -> ExamFetchResult:
             await browser.close()
 
 
-async def _fetch_exam_projects(page: Any, base_url: str, semester: str) -> tuple[str, str]:
-    response = await page.evaluate(
-        """async ({url, semester}) => {
-            const response = await fetch(`${url}?xnxqid=${encodeURIComponent(semester)}`, {
-                method: 'POST',
-                headers: {'X-Requested-With': 'XMLHttpRequest'},
-                credentials: 'include'
-            });
-            if (!response.ok) throw new Error(`exam project query failed: ${response.status}`);
-            return {
-                body: await response.text(),
-                url: response.url,
-                contentType: response.headers.get('content-type') || ''
-            };
-        }""",
-        {"url": f"{base_url}{EXAM_PROJECTS_PATH}", "semester": semester},
+async def _discover_exam_projects(page: Any, semester: str) -> list[ExamProject]:
+    if await page.locator("#xnxqid").count() != 1:
+        raise ExamAuthenticationError("The NJFU exam query form is unavailable after login.")
+    selected = await page.select_option("#xnxqid", semester)
+    if semester not in selected:
+        raise ExamParseError("The requested semester is unavailable in the exam query form.")
+    await page.evaluate(
+        """() => {
+            const project = document.querySelector('#kw0401id');
+            if (!project || typeof onckKsmc !== 'function') {
+                throw new Error('exam project loader unavailable');
+            }
+            project.innerHTML = '<option value="">--请选择--</option>';
+            onckKsmc();
+        }"""
     )
-    response_url = str(response.get("url") or "")
-    if _is_login_url(response_url):
-        raise ExamAuthenticationError("The NJFU login session expired during project discovery.")
-    return str(response.get("body") or ""), str(response.get("contentType") or "")
+    await page.wait_for_timeout(1800)
+    items = await page.eval_on_selector_all(
+        "#kw0401id option",
+        """options => options
+            .map(option => ({kw0401id: option.value.trim(), ksmc: option.textContent.trim()}))
+            .filter(item => item.kw0401id && item.ksmc)""",
+    )
+    return parse_exam_projects(items)
 
 
 def parse_exam_projects_text(text: str) -> list[ExamProject]:
