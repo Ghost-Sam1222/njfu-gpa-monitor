@@ -17,6 +17,7 @@ from exam_source import (
     _infer_exam_type,
     _infer_query_category,
     _discover_exam_projects,
+    _extract_redirect_target,
     _is_login_url,
     _parse_datetime_range,
     _run_cli,
@@ -248,6 +249,12 @@ class SuggestionTests(unittest.TestCase):
         self.assertEqual(_safe_response_shape(body), "redirect")
         reason = _safe_failure_reason(ExamParseError("The exam response shape is redirect."))
         self.assertEqual(reason, "response_redirect")
+
+    def test_extracts_school_result_redirect_without_executing_script(self) -> None:
+        html = "<script>window.location.href='/jsxsd/xsks/result?id=token'</script>"
+        self.assertEqual(
+            _extract_redirect_target(html), "/jsxsd/xsks/result?id=token"
+        )
 
     def test_setup_failure_is_sanitized(self) -> None:
         with patch("exam_source.fetch_exams", new=AsyncMock(side_effect=ExamParseError("private response"))):

@@ -12,7 +12,7 @@ from html import escape
 from html.parser import HTMLParser
 from types import SimpleNamespace
 from typing import Any, Protocol
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from config import DEFAULT_BASE_URL, infer_semester
 from models import Exam
@@ -263,14 +263,24 @@ async def _query_exam_project(
     if not response.ok:
         raise ExamSourceError(f"The exam query returned HTTP {response.status}.")
     response_body = await response.body()
+    decoded_candidates: list[str] = []
     for encoding in ("utf-8", "gb18030"):
         try:
             decoded = response_body.decode(encoding)
         except UnicodeDecodeError:
             continue
+        decoded_candidates.append(decoded)
         if any(marker in decoded for marker in ("课程名称", "未查询到数据", "暂无数据")):
             return decoded
     result_frame = response.frame
+    redirect_target = next(
+        (target for text in decoded_candidates if (target := _extract_redirect_target(text))),
+        None,
+    )
+    if redirect_target:
+        redirect_url = urljoin(response.url, redirect_target)
+        _require_njfu_url(redirect_url)
+        await result_frame.goto(redirect_url, wait_until="domcontentloaded", timeout=60000)
     for _ in range(20):
         rows = await result_frame.eval_on_selector_all(
             "table tr",
@@ -303,6 +313,17 @@ def _safe_response_shape(body: bytes) -> str:
     if b"<table" in lowered:
         return "table"
     return "html" if b"<html" in lowered else "other"
+
+
+_REDIRECT_PATTERN = re.compile(
+    r"(?:window|top)\.location(?:\.href)?\s*=\s*['\"]([^'\"]+)['\"]",
+    re.IGNORECASE,
+)
+
+
+def _extract_redirect_target(html: str) -> str | None:
+    match = _REDIRECT_PATTERN.search(html)
+    return match.group(1).strip() if match else None
 
 
 def _normalize_text(value: Any) -> str:
