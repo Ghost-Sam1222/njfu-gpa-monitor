@@ -207,7 +207,7 @@ async def _fetch_exam_projects(page: Any, base_url: str, semester: str) -> str:
     return await page.evaluate(
         """async ({url, semester}) => {
             const response = await fetch(`${url}?xnxqid=${encodeURIComponent(semester)}`, {
-                method: 'POST',
+                method: 'GET',
                 credentials: 'include'
             });
             if (!response.ok) throw new Error(`exam project query failed: ${response.status}`);

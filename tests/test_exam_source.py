@@ -16,6 +16,7 @@ from exam_source import (
     _infer_campus,
     _infer_exam_type,
     _infer_query_category,
+    _fetch_exam_projects,
     _is_login_url,
     _parse_datetime_range,
     _run_cli,
@@ -88,6 +89,16 @@ class ExamProjectTests(unittest.TestCase):
         self.assertTrue(_is_login_url("https://authserver.njfu.edu.cn/authserver/login"))
         self.assertTrue(_is_login_url("https://uia.njfu.edu.cn/cas/login"))
         self.assertFalse(_is_login_url("https://jwxt.njfu.edu.cn/jsxsd/xsks/xsksap_query"))
+
+
+class ExamRequestTests(unittest.IsolatedAsyncioTestCase):
+    async def test_project_discovery_uses_verified_get_endpoint(self) -> None:
+        page = AsyncMock()
+        page.evaluate.return_value = "[]"
+        await _fetch_exam_projects(page, "https://jwxt.njfu.edu.cn", "2025-2026-2")
+        script = page.evaluate.await_args.args[0]
+        self.assertIn("method: 'GET'", script)
+        self.assertNotIn("method: 'POST'", script)
 
 
 class ExamHTMLTests(unittest.TestCase):
