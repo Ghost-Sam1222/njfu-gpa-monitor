@@ -48,6 +48,7 @@ class ExamFetchResult:
     exams: tuple[Exam, ...]
     projects: tuple[ExamProject, ...]
     failed_projects: tuple[ExamProject, ...] = ()
+    failure_reasons: tuple[str, ...] = ()
 
     @property
     def complete(self) -> bool:
@@ -172,6 +173,7 @@ async def _fetch_exams(settings: ExamSettings) -> ExamFetchResult:
             projects = await _discover_exam_projects(page, settings.semester)
             exams: list[Exam] = []
             failed: list[ExamProject] = []
+            failure_reasons: list[str] = []
             seen_keys: set[str] = set()
 
             for project in projects:
@@ -192,11 +194,14 @@ async def _fetch_exams(settings: ExamSettings) -> ExamFetchResult:
                             exams.append(exam)
                 except ExamAuthenticationError:
                     raise
-                except Exception:
+                except Exception as exc:
                     failed.append(project)
+                    failure_reasons.append(_safe_failure_reason(exc))
 
             exams.sort(key=lambda item: (item.start_time, item.course_name, item.location))
-            return ExamFetchResult(tuple(exams), tuple(projects), tuple(failed))
+            return ExamFetchResult(
+                tuple(exams), tuple(projects), tuple(failed), tuple(failure_reasons)
+            )
         finally:
             await browser.close()
 
@@ -489,6 +494,15 @@ def _infer_campus(project_name: str) -> str:
     return match.group(1) if match else ""
 
 
+def _safe_failure_reason(exc: Exception) -> str:
+    if isinstance(exc, ExamParseError):
+        return "parse"
+    if isinstance(exc, ExamSourceError):
+        return "source"
+    name = type(exc).__name__
+    return name if name in {"TimeoutError", "TypeError", "ValueError"} else "browser"
+
+
 def suggested_monitor_until(exams: tuple[Exam, ...] | list[Exam]) -> date | None:
     if not exams:
         return None
@@ -498,6 +512,10 @@ def suggested_monitor_until(exams: tuple[Exam, ...] | list[Exam]) -> date | None
 def describe_result(result: ExamFetchResult) -> dict[str, Any]:
     latest = max((exam.end_time.date() for exam in result.exams), default=None)
     suggested = suggested_monitor_until(result.exams)
+    reason_counts = {
+        reason: result.failure_reasons.count(reason)
+        for reason in sorted(set(result.failure_reasons))
+    }
     return {
         "exam_count": len(result.exams),
         "project_count": len(result.projects),
@@ -505,6 +523,7 @@ def describe_result(result: ExamFetchResult) -> dict[str, Any]:
         "suggested_monitor_until": suggested.isoformat() if suggested else None,
         "complete": result.complete,
         "failed_project_count": len(result.failed_projects),
+        "failure_reasons": reason_counts,
     }
 
 

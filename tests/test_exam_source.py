@@ -20,6 +20,7 @@ from exam_source import (
     _is_login_url,
     _parse_datetime_range,
     _run_cli,
+    _safe_failure_reason,
     describe_result,
     parse_exam_html,
     parse_exam_projects,
@@ -222,9 +223,14 @@ class SuggestionTests(unittest.TestCase):
 
     def test_failed_project_makes_result_incomplete(self) -> None:
         project = ExamProject("p1", "期末考试")
-        payload = describe_result(ExamFetchResult((), (project,), (project,)))
+        payload = describe_result(ExamFetchResult((), (project,), (project,), ("parse",)))
         self.assertFalse(payload["complete"])
         self.assertEqual(payload["failed_project_count"], 1)
+        self.assertEqual(payload["failure_reasons"], {"parse": 1})
+
+    def test_failure_reason_never_includes_exception_message(self) -> None:
+        reason = _safe_failure_reason(ExamParseError("private course response"))
+        self.assertEqual(reason, "parse")
 
     def test_setup_failure_is_sanitized(self) -> None:
         with patch("exam_source.fetch_exams", new=AsyncMock(side_effect=ExamParseError("private response"))):
