@@ -92,13 +92,31 @@ class ExamProjectTests(unittest.TestCase):
 
 
 class ExamRequestTests(unittest.IsolatedAsyncioTestCase):
-    async def test_project_discovery_uses_verified_get_endpoint(self) -> None:
+    async def test_project_discovery_matches_verified_jquery_ajax(self) -> None:
         page = AsyncMock()
-        page.evaluate.return_value = "[]"
-        await _fetch_exam_projects(page, "https://jwxt.njfu.edu.cn", "2025-2026-2")
+        page.evaluate.return_value = {
+            "body": "[]",
+            "url": "https://jwxt.njfu.edu.cn/jsxsd/xsks/xsksap_ksmc?xnxqid=2025-2026-2",
+            "contentType": "application/json;charset=UTF-8",
+        }
+        body, response_type = await _fetch_exam_projects(
+            page, "https://jwxt.njfu.edu.cn", "2025-2026-2"
+        )
         script = page.evaluate.await_args.args[0]
-        self.assertIn("method: 'GET'", script)
-        self.assertNotIn("method: 'POST'", script)
+        self.assertIn("method: 'POST'", script)
+        self.assertIn("X-Requested-With", script)
+        self.assertEqual(body, "[]")
+        self.assertEqual(response_type, "application/json;charset=UTF-8")
+
+    async def test_project_discovery_detects_login_redirect(self) -> None:
+        page = AsyncMock()
+        page.evaluate.return_value = {
+            "body": "<html></html>",
+            "url": "https://uia.njfu.edu.cn/cas/login",
+            "contentType": "text/html",
+        }
+        with self.assertRaises(ExamAuthenticationError):
+            await _fetch_exam_projects(page, "https://jwxt.njfu.edu.cn", "2025-2026-2")
 
 
 class ExamHTMLTests(unittest.TestCase):

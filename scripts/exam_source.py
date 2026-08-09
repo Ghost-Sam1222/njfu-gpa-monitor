@@ -170,8 +170,12 @@ async def _fetch_exams(settings: ExamSettings) -> ExamFetchResult:
             if _is_login_url(page.url):
                 raise ExamAuthenticationError("The NJFU login session expired before the exam query.")
 
-            projects_text = await _fetch_exam_projects(page, base_url, settings.semester)
-            projects = parse_exam_projects_text(projects_text)
+            projects_text, response_type = await _fetch_exam_projects(page, base_url, settings.semester)
+            try:
+                projects = parse_exam_projects_text(projects_text)
+            except ExamParseError as exc:
+                safe_type = response_type.split(";", 1)[0] or "unknown"
+                raise ExamParseError(f"{exc} Response type: {safe_type}.") from exc
             exams: list[Exam] = []
             failed: list[ExamProject] = []
             seen_keys: set[str] = set()
@@ -203,18 +207,27 @@ async def _fetch_exams(settings: ExamSettings) -> ExamFetchResult:
             await browser.close()
 
 
-async def _fetch_exam_projects(page: Any, base_url: str, semester: str) -> str:
-    return await page.evaluate(
+async def _fetch_exam_projects(page: Any, base_url: str, semester: str) -> tuple[str, str]:
+    response = await page.evaluate(
         """async ({url, semester}) => {
             const response = await fetch(`${url}?xnxqid=${encodeURIComponent(semester)}`, {
-                method: 'GET',
+                method: 'POST',
+                headers: {'X-Requested-With': 'XMLHttpRequest'},
                 credentials: 'include'
             });
             if (!response.ok) throw new Error(`exam project query failed: ${response.status}`);
-            return await response.text();
+            return {
+                body: await response.text(),
+                url: response.url,
+                contentType: response.headers.get('content-type') || ''
+            };
         }""",
         {"url": f"{base_url}{EXAM_PROJECTS_PATH}", "semester": semester},
     )
+    response_url = str(response.get("url") or "")
+    if _is_login_url(response_url):
+        raise ExamAuthenticationError("The NJFU login session expired during project discovery.")
+    return str(response.get("body") or ""), str(response.get("contentType") or "")
 
 
 def parse_exam_projects_text(text: str) -> list[ExamProject]:
