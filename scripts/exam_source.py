@@ -261,11 +261,15 @@ async def _query_exam_project(
         raise ExamAuthenticationError("The NJFU login session expired during the exam query.")
     if not response.ok:
         raise ExamSourceError(f"The exam query returned HTTP {response.status}.")
-    await page.wait_for_timeout(300)
-    result_frame = page.frame(name="fcenter")
-    if result_frame is None:
-        raise ExamParseError("The exam result frame is unavailable.")
-    return await result_frame.content()
+    last_html = ""
+    for _ in range(20):
+        result_frame = page.frame(name="fcenter")
+        if result_frame is not None:
+            last_html = await result_frame.content()
+            if any(marker in last_html for marker in ("课程名称", "未查询到数据", "暂无数据")):
+                return last_html
+        await page.wait_for_timeout(250)
+    return last_html
 
 
 def _normalize_text(value: Any) -> str:
