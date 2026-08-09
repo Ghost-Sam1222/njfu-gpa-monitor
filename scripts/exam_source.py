@@ -255,7 +255,7 @@ async def _query_exam_project(
     if project.project_id not in selected_project or query_category not in selected_category:
         raise ExamParseError("The exam project cannot be selected in the query form.")
     async with page.expect_response(lambda response: EXAM_LIST_PATH in response.url) as response_info:
-        await page.evaluate("queryKsap()")
+        await page.click("#btn_query")
     response = await response_info.value
     if _is_login_url(response.url):
         raise ExamAuthenticationError("The NJFU login session expired during the exam query.")
