@@ -19,7 +19,6 @@ from exam_source import (
     _discover_exam_projects,
     _is_login_url,
     _parse_datetime_range,
-    _query_exam_project,
     _run_cli,
     describe_result,
     parse_exam_html,
@@ -111,20 +110,6 @@ class ExamRequestTests(unittest.IsolatedAsyncioTestCase):
         page.locator.return_value.count = AsyncMock(return_value=0)
         with self.assertRaises(ExamAuthenticationError):
             await _discover_exam_projects(page, "2025-2026-2")
-
-    async def test_exam_query_includes_visible_category_name(self) -> None:
-        page = MagicMock()
-        page.evaluate = AsyncMock(return_value="<html></html>")
-        await _query_exam_project(
-            page,
-            "https://jwxt.njfu.edu.cn",
-            "2025-2026-2",
-            ExamProject("p1", "期末考试（新庄校区）"),
-        )
-        payload = page.evaluate.await_args.args[1]
-        self.assertEqual(payload["queryCategory"], "3")
-        self.assertEqual(payload["queryCategoryName"], "期末")
-
 
 class ExamHTMLTests(unittest.TestCase):
     def test_parses_verified_njfu_table_shape(self) -> None:

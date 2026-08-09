@@ -245,32 +245,18 @@ async def _query_exam_project(
     project: ExamProject,
 ) -> str:
     query_category = _infer_query_category(project.name)
-    query_category_name = {"1": "期初", "2": "期中", "3": "期末"}[query_category]
-    return await page.evaluate(
-        """async ({url, semester, projectId, queryCategory, queryCategoryName}) => {
-            const form = new URLSearchParams({
-                xqlbmc: queryCategoryName,
-                xnxqid: semester,
-                kw0401id: projectId,
-                xqlb: queryCategory
-            });
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                body: form.toString(),
-                credentials: 'include'
-            });
-            if (!response.ok) throw new Error(`exam query failed: ${response.status}`);
-            return await response.text();
-        }""",
-        {
-            "url": f"{base_url}{EXAM_LIST_PATH}",
-            "semester": semester,
-            "projectId": project.project_id,
-            "queryCategory": query_category,
-            "queryCategoryName": query_category_name,
-        },
-    )
+    selected_project = await page.select_option("#kw0401id", project.project_id)
+    selected_category = await page.select_option("#xqlb", query_category)
+    if project.project_id not in selected_project or query_category not in selected_category:
+        raise ExamParseError("The exam project cannot be selected in the query form.")
+    async with page.expect_response(lambda response: EXAM_LIST_PATH in response.url) as response_info:
+        await page.evaluate("queryKsap()")
+    response = await response_info.value
+    if _is_login_url(response.url):
+        raise ExamAuthenticationError("The NJFU login session expired during the exam query.")
+    if not response.ok:
+        raise ExamSourceError(f"The exam query returned HTTP {response.status}.")
+    return await response.text()
 
 
 def _normalize_text(value: Any) -> str:
