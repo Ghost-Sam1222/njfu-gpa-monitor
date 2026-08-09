@@ -245,10 +245,11 @@ async def _query_exam_project(
     project: ExamProject,
 ) -> str:
     query_category = _infer_query_category(project.name)
+    query_category_name = {"1": "期初", "2": "期中", "3": "期末"}[query_category]
     return await page.evaluate(
-        """async ({url, semester, projectId, queryCategory}) => {
+        """async ({url, semester, projectId, queryCategory, queryCategoryName}) => {
             const form = new URLSearchParams({
-                xqlbmc: '',
+                xqlbmc: queryCategoryName,
                 xnxqid: semester,
                 kw0401id: projectId,
                 xqlb: queryCategory
@@ -267,6 +268,7 @@ async def _query_exam_project(
             "semester": semester,
             "projectId": project.project_id,
             "queryCategory": query_category,
+            "queryCategoryName": query_category_name,
         },
     )
 
