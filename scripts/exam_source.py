@@ -262,6 +262,14 @@ async def _query_exam_project(
         raise ExamAuthenticationError("The NJFU login session expired during the exam query.")
     if not response.ok:
         raise ExamSourceError(f"The exam query returned HTTP {response.status}.")
+    response_body = await response.body()
+    for encoding in ("utf-8", "gb18030"):
+        try:
+            decoded = response_body.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        if any(marker in decoded for marker in ("课程名称", "未查询到数据", "暂无数据")):
+            return decoded
     result_frame = response.frame
     for _ in range(20):
         rows = await result_frame.eval_on_selector_all(
