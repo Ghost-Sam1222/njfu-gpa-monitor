@@ -22,6 +22,7 @@ from exam_source import (
     _run_cli,
     _rows_to_html,
     _safe_failure_reason,
+    _safe_response_shape,
     describe_result,
     parse_exam_html,
     parse_exam_projects,
@@ -241,6 +242,12 @@ class SuggestionTests(unittest.TestCase):
     def test_failure_reason_never_includes_exception_message(self) -> None:
         reason = _safe_failure_reason(ExamParseError("private course response"))
         self.assertEqual(reason, "parse")
+
+    def test_response_shape_contains_no_body_content(self) -> None:
+        body = b"<html><script>window.location='/private'</script></html>"
+        self.assertEqual(_safe_response_shape(body), "redirect")
+        reason = _safe_failure_reason(ExamParseError("The exam response shape is redirect."))
+        self.assertEqual(reason, "response_redirect")
 
     def test_setup_failure_is_sanitized(self) -> None:
         with patch("exam_source.fetch_exams", new=AsyncMock(side_effect=ExamParseError("private response"))):

@@ -281,7 +281,7 @@ async def _query_exam_project(
         if rows:
             return _rows_to_html(rows)
         await page.wait_for_timeout(250)
-    return ""
+    raise ExamParseError(f"The exam response shape is {_safe_response_shape(response_body)}.")
 
 
 def _rows_to_html(rows: list[list[str]]) -> str:
@@ -290,6 +290,19 @@ def _rows_to_html(rows: list[list[str]]) -> str:
         cells = "".join(f"<td>{escape(str(cell))}</td>" for cell in row)
         rendered_rows.append(f"<tr>{cells}</tr>")
     return f"<table>{''.join(rendered_rows)}</table>"
+
+
+def _safe_response_shape(body: bytes) -> str:
+    lowered = body.lower()
+    if not body.strip():
+        return "empty"
+    if b"username" in lowered and b"password" in lowered:
+        return "login"
+    if b"window.location" in lowered or b"top.location" in lowered:
+        return "redirect"
+    if b"<table" in lowered:
+        return "table"
+    return "html" if b"<html" in lowered else "other"
 
 
 def _normalize_text(value: Any) -> str:
@@ -524,6 +537,9 @@ def _infer_campus(project_name: str) -> str:
 
 def _safe_failure_reason(exc: Exception) -> str:
     if isinstance(exc, ExamParseError):
+        match = re.search(r"response shape is (empty|login|redirect|table|html|other)", str(exc))
+        if match:
+            return f"response_{match.group(1)}"
         return "parse"
     if isinstance(exc, ExamSourceError):
         return "source"
