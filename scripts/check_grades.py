@@ -117,17 +117,19 @@ def deliver_realtime(
         delivered = state.delivered(channel)
         pending_hashes = [item for item in grades_by_hash if item not in delivered]
         pending_grades = [grades_by_hash[item] for item in pending_hashes]
-        if pending_grades:
-            try:
+        try:
+            if pending_grades:
                 send_channel(
                     settings.notifications,
                     channel,
                     "NJFU GPA 新成绩",
                     format_grades(pending_grades, average_gpa),
                 )
-                delivered.update(pending_hashes)
-            except NotificationError as exc:
-                failures.append(f"{channel}: {exc}")
+        except NotificationError as exc:
+            failures.append(f"{channel}: {exc}")
+        else:
+            delivered.intersection_update({completion_marker})
+            delivered.update(grades_by_hash)
 
         if detected_complete and completion_marker not in delivered:
             try:
@@ -154,7 +156,11 @@ def deliver_email(
         return []
     completion_marker = f"completion:{settings.semester}"
     delivered = state.delivered("email")
+    current_hashes = {grade.identity(settings.state_salt) for grade in grades}
     state.email_pending_count += new_count
+    # Legacy email states contain only the marker, so their pending work is retained.
+    if delivered - {completion_marker} and not current_hashes - delivered:
+        state.email_pending_count = 0
     threshold_reached = state.email_pending_count >= settings.email_batch_size
     final_due = (
         detected_complete
@@ -173,6 +179,8 @@ def deliver_email(
     except OSError as exc:
         return [f"email: report generation failed: {type(exc).__name__}"]
     state.email_pending_count = 0
+    delivered.intersection_update({completion_marker})
+    delivered.update(current_hashes)
     if final_due:
         delivered.add(completion_marker)
     return []
@@ -219,7 +227,8 @@ def run() -> None:
         state.initialized = True
         state.observed_hashes = set(current_hashes)
         if not settings.notify_on_first_run:
-            initialize_channel_baselines(state, channels, current_hashes)
+            baseline_channels = channels + (("email",) if settings.notifications.email_enabled() else ())
+            initialize_channel_baselines(state, baseline_channels, current_hashes)
         new_count = len(current_hashes) if settings.notify_on_first_run else 0
     else:
         new_count = len(current_hashes - state.observed_hashes)
@@ -227,7 +236,7 @@ def run() -> None:
 
     failures = deliver_realtime(settings, state, grades_by_hash, detected_complete)
     failures.extend(deliver_email(settings, state, grades, detected_complete, new_count))
-    state.observed_hashes.update(current_hashes)
+    state.observed_hashes = set(current_hashes)
     state.complete = detected_complete and not failures
     save_state(settings.state_path, state)
     print(f"Grade check finished: changed={new_count > 0} complete={state.complete}.")

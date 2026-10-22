@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from dataclasses import replace
 from datetime import date
@@ -20,8 +21,8 @@ from check_grades import (
 from grade_source import GradeSourceError
 from config import Settings
 from models import Grade
-from notifications import NotificationSettings
-from state import MonitorState
+from notifications import NotificationError, NotificationSettings
+from state import MonitorState, load_state
 
 
 def settings() -> Settings:
@@ -135,6 +136,109 @@ class MonitorPolicyTests(unittest.TestCase):
         self.assertEqual(failures, [])
         self.assertEqual(sent, ["slack"])
 
+    def test_reverting_a_delivered_correction_notifies_again(self) -> None:
+        configured = replace(settings(), notifications=NotificationSettings(bark_device_key="test-key"))
+        original = Grade(configured.semester, "SYNTH-001", "合成课程", "80", "2", "3.0", "必修")
+        corrected = replace(original, score="85", gpa="3.5")
+        state = MonitorState(configured.semester, initialized=True)
+        state.delivered("bark").add(original.identity(configured.state_salt))
+        marker = f"completion:{configured.semester}"
+        state.delivered("bark").add(marker)
+        with patch("check_grades.send_channel") as sender:
+            for item in (corrected, original):
+                self.assertEqual(deliver_realtime(
+                    configured, state, {item.identity(configured.state_salt): item}, True,
+                ), [])
+        self.assertEqual(sender.call_count, 2)
+        self.assertIn(marker, state.delivered("bark"))
+
+    def test_failed_correction_does_not_renotify_the_last_delivered_value(self) -> None:
+        configured = replace(settings(), notifications=NotificationSettings(bark_device_key="test-key"))
+        original = Grade(configured.semester, "SYNTH-001", "合成课程", "80", "2", "3.0", "必修")
+        corrected = replace(original, score="85", gpa="3.5")
+        state = MonitorState(configured.semester, initialized=True)
+        state.delivered("bark").add(original.identity(configured.state_salt))
+        with patch("check_grades.send_channel", side_effect=NotificationError("offline")):
+            self.assertEqual(len(deliver_realtime(
+                configured, state, {corrected.identity(configured.state_salt): corrected}, False,
+            )), 1)
+        with patch("check_grades.send_channel") as sender:
+            self.assertEqual(deliver_realtime(
+                configured, state, {original.identity(configured.state_salt): original}, False,
+            ), [])
+        sender.assert_not_called()
+
+    def test_channel_snapshots_remain_independent_across_a_failed_correction(self) -> None:
+        configured = replace(settings(), notifications=NotificationSettings(
+            bark_device_key="test-key", slack_webhook_url="https://hooks.slack.test/example",
+        ))
+        original = Grade(configured.semester, "SYNTH-001", "合成课程", "80", "2", "3.0", "必修")
+        corrected = replace(original, score="85", gpa="3.5")
+        state = MonitorState(configured.semester, initialized=True)
+        for channel in ("bark", "slack"):
+            state.delivered(channel).add(original.identity(configured.state_salt))
+        def send(_settings, channel, _title, _body):
+            if channel == "bark":
+                raise NotificationError("offline")
+        with patch("check_grades.send_channel", side_effect=send):
+            self.assertEqual(len(deliver_realtime(
+                configured, state, {corrected.identity(configured.state_salt): corrected}, False,
+            )), 1)
+        with patch("check_grades.send_channel") as sender:
+            self.assertEqual(deliver_realtime(
+                configured, state, {original.identity(configured.state_salt): original}, False,
+            ), [])
+        self.assertEqual([call.args[1] for call in sender.call_args_list], ["slack"])
+
+    def test_legacy_known_versions_do_not_replay_then_track_reversions(self) -> None:
+        with TemporaryDirectory() as directory:
+            configured = replace(settings(), force_check=True, state_path=Path(directory) / "state.json",
+                                 notifications=NotificationSettings(bark_device_key="test-key"))
+            original = Grade(configured.semester, "SYNTH-001", "合成课程", "80", "2", "3.0", "必修")
+            corrected = replace(original, score="85", gpa="3.5")
+            marker = f"completion:{configured.semester}"
+            history = [item.identity(configured.state_salt) for item in (original, corrected)]
+            configured.state_path.write_text(json.dumps({
+                "schema_version": 2, "semester": configured.semester, "initialized": True,
+                "observed_hashes": history, "delivered_by_channel": {"bark": history + [marker]},
+                "email_pending_count": 2,
+            }))
+            with patch("check_grades.load_settings", return_value=configured), patch(
+                "check_grades.fetch_grades_with_retry", return_value=[original],
+            ), patch("check_grades.send_channel") as sender:
+                run()
+            self.assertEqual(sender.call_count, 0)
+            migrated = load_state(configured.state_path, configured.semester)
+            self.assertEqual(migrated.observed_hashes, {original.identity(configured.state_salt)})
+            self.assertEqual(migrated.delivered("bark"), {original.identity(configured.state_salt), marker})
+            self.assertEqual(migrated.email_pending_count, 2)
+            with patch("check_grades.load_settings", return_value=configured), patch(
+                "check_grades.fetch_grades_with_retry", side_effect=[[corrected], [original]],
+            ), patch("check_grades.send_channel") as sender:
+                run()
+                run()
+            self.assertEqual(sender.call_count, 2)
+
+    def test_legacy_migration_still_notifies_a_never_seen_correction(self) -> None:
+        with TemporaryDirectory() as directory:
+            configured = replace(settings(), force_check=True, expected_grade_count=2,
+                                 state_path=Path(directory) / "state.json",
+                                 notifications=NotificationSettings(bark_device_key="test-key"))
+            original = Grade(configured.semester, "SYNTH-001", "合成课程", "80", "2", "3.0", "必修")
+            corrected = replace(original, score="85", gpa="3.5")
+            configured.state_path.write_text(json.dumps({
+                "schema_version": 2, "semester": configured.semester, "initialized": True,
+                "observed_hashes": [original.identity(configured.state_salt)],
+                "delivered_by_channel": {"bark": [original.identity(configured.state_salt)]},
+            }))
+            with patch("check_grades.load_settings", return_value=configured), patch(
+                "check_grades.fetch_grades_with_retry", return_value=[corrected],
+            ), patch("check_grades.send_channel") as sender:
+                run()
+            self.assertEqual(sender.call_count, 1)
+            self.assertEqual(load_state(configured.state_path, configured.semester).observed_hashes,
+                             {corrected.identity(configured.state_salt)})
+
     def test_final_email_is_sent_once(self) -> None:
         notifications = NotificationSettings(
             email_from="sender@example.com",
@@ -155,6 +259,72 @@ class MonitorPolicyTests(unittest.TestCase):
                 self.assertEqual(deliver_email(configured, state, [item], True, 1), [])
                 self.assertEqual(deliver_email(configured, state, [item], True, 0), [])
             self.assertEqual(mocked_send.call_count, 1)
+
+    def test_failed_email_correction_then_reversion_cancels_duplicate_report(self) -> None:
+        notifications = NotificationSettings(
+            email_from="sender@example.com", email_password="test-password",
+            email_to="reader@example.com", email_smtp_server="smtp.example.com", email_smtp_port=465,
+        )
+        with TemporaryDirectory() as directory:
+            configured = replace(settings(), notifications=notifications, email_batch_size=1,
+                                 report_path=Path(directory) / "report.html")
+            original = Grade(configured.semester, "SYNTH-001", "合成课程", "80", "2", "3.0", "必修")
+            corrected = replace(original, score="85", gpa="3.5")
+            state = MonitorState(configured.semester, initialized=True)
+            state.delivered("email").add(original.identity(configured.state_salt))
+            with patch("check_grades.send_email", side_effect=NotificationError("offline")):
+                self.assertEqual(len(deliver_email(configured, state, [corrected], False, 1)), 1)
+            self.assertEqual(state.delivered("email"), {original.identity(configured.state_salt)})
+            self.assertEqual(state.email_pending_count, 1)
+            with patch("check_grades.send_email") as sender:
+                self.assertEqual(deliver_email(configured, state, [original], False, 1), [])
+            sender.assert_not_called()
+            self.assertEqual(state.email_pending_count, 0)
+
+    def test_email_snapshots_track_successful_reversions_and_keep_completion_marker(self) -> None:
+        notifications = NotificationSettings(
+            email_from="sender@example.com", email_password="test-password",
+            email_to="reader@example.com", email_smtp_server="smtp.example.com", email_smtp_port=465,
+        )
+        with TemporaryDirectory() as directory:
+            configured = replace(settings(), notifications=notifications, email_batch_size=1,
+                                 report_path=Path(directory) / "report.html")
+            original = Grade(configured.semester, "SYNTH-001", "合成课程", "80", "2", "3.0", "必修")
+            corrected = replace(original, score="85", gpa="3.5")
+            marker = f"completion:{configured.semester}"
+            state = MonitorState(configured.semester, initialized=True)
+            state.delivered("email").update({original.identity(configured.state_salt), marker})
+            with patch("check_grades.send_email") as sender:
+                for item in (corrected, original):
+                    self.assertEqual(deliver_email(configured, state, [item], True, 1), [])
+                    self.assertEqual(state.delivered("email"), {item.identity(configured.state_salt), marker})
+            self.assertEqual(sender.call_count, 2)
+
+    def test_legacy_email_pending_count_survives_failure_and_retries(self) -> None:
+        notifications = NotificationSettings(
+            email_from="sender@example.com", email_password="test-password",
+            email_to="reader@example.com", email_smtp_server="smtp.example.com", email_smtp_port=465,
+        )
+        with TemporaryDirectory() as directory:
+            configured = replace(settings(), notifications=notifications, email_batch_size=2,
+                                 state_path=Path(directory) / "state.json", report_path=Path(directory) / "report.html")
+            item = Grade(configured.semester, "SYNTH-001", "合成课程", "80", "2", "3.0", "必修")
+            marker = f"completion:{configured.semester}"
+            configured.state_path.write_text(json.dumps({
+                "schema_version": 2, "semester": configured.semester, "initialized": True,
+                "observed_hashes": [item.identity(configured.state_salt)],
+                "delivered_by_channel": {"email": [marker]}, "email_pending_count": 2,
+            }))
+            state = load_state(configured.state_path, configured.semester)
+            with patch("check_grades.send_email", side_effect=NotificationError("offline")):
+                self.assertEqual(len(deliver_email(configured, state, [item], True, 0)), 1)
+            self.assertEqual(state.email_pending_count, 2)
+            self.assertEqual(state.delivered("email"), {marker})
+            with patch("check_grades.send_email") as sender:
+                self.assertEqual(deliver_email(configured, state, [item], True, 0), [])
+            self.assertEqual(sender.call_count, 1)
+            self.assertEqual(state.email_pending_count, 0)
+            self.assertEqual(state.delivered("email"), {item.identity(configured.state_salt), marker})
 
     def test_third_consecutive_source_failure_sends_one_health_alert(self) -> None:
         with TemporaryDirectory() as directory:
