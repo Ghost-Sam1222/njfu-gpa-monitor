@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,24 @@ from state import MonitorState, load_state, save_state
 
 
 class StateTests(unittest.TestCase):
+    def test_invalid_cache_structure_starts_a_fresh_baseline(self) -> None:
+        semester = "2026-2027-1"
+        invalid = [[], None, "text", 1,
+                   {"semester": semester, "observed_hashes": "not-a-list"},
+                   {"semester": semester, "observed_hashes": [{}]},
+                   {"semester": semester, "delivered_by_channel": []},
+                   {"semester": semester, "delivered_by_channel": {"bark": [{}]}},
+                   {"semester": semester, "email_pending_count": "invalid"},
+                   {"semester": semester, "consecutive_failures": -1}]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.json"
+            for payload in invalid:
+                with self.subTest(payload=payload):
+                    path.write_text(json.dumps(payload), encoding="utf-8")
+                    self.assertEqual(load_state(path, semester), MonitorState(semester))
+            path.write_bytes(b"\xff")
+            self.assertEqual(load_state(path, semester), MonitorState(semester))
+
     def test_zero_grade_baseline_stays_initialized(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.json"

@@ -27,17 +27,25 @@ def load_state(path: Path, semester: str) -> MonitorState:
         return MonitorState(semester=semester)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
         return MonitorState(semester=semester)
-    if raw.get("semester") != semester:
+    if not isinstance(raw, dict) or raw.get("semester") != semester:
         return MonitorState(semester=semester)
 
     observed = raw.get("observed_hashes", raw.get("hashes", []))
-    delivered = {
-        str(channel): set(items)
-        for channel, items in (raw.get("delivered_by_channel") or {}).items()
-        if isinstance(items, list)
-    }
+    deliveries = raw.get("delivered_by_channel", {})
+    counters = [raw.get(name, 0) for name in ("email_pending_count", "consecutive_failures")]
+    if (
+        not isinstance(observed, list)
+        or not all(isinstance(item, str) for item in observed)
+        or not isinstance(deliveries, dict)
+        or not all(isinstance(items, list) and all(isinstance(item, str) for item in items)
+                   for items in deliveries.values())
+        or not all(type(value) is int and value >= 0 for value in counters)
+        or not all(type(raw[name]) is bool for name in ("initialized", "complete") if name in raw)
+    ):
+        return MonitorState(semester=semester)
+    delivered = {channel: set(items) for channel, items in deliveries.items()}
     initialized = bool(raw.get("initialized", bool(observed)))
     return MonitorState(
         semester=semester,
