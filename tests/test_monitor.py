@@ -20,6 +20,7 @@ from check_grades import (
 )
 from grade_source import GradeSourceError
 from config import Settings
+from completion import cached_completion
 from models import Grade
 from notifications import NotificationError, NotificationSettings
 from state import MonitorState, load_state
@@ -50,6 +51,89 @@ def settings() -> Settings:
 
 
 class MonitorPolicyTests(unittest.TestCase):
+    def test_successful_completion_skips_later_scheduled_fetch(self) -> None:
+        with TemporaryDirectory() as directory:
+            configured = replace(settings(), state_path=Path(directory) / "state.json",
+                                 notifications=NotificationSettings(bark_device_key="test-key"))
+            item = Grade(configured.semester, "SYNTH-1", "合成课程", "90", "1", "4", "必修")
+            with patch("check_grades.shanghai_today", return_value=date(2026, 7, 1)), patch(
+                "check_grades.load_settings", return_value=configured,
+            ), patch("check_grades.fetch_grades_with_retry", return_value=[item]) as fetch, patch(
+                "check_grades.send_channel",
+            ):
+                run()
+                run()
+            self.assertEqual(fetch.call_count, 1)
+            with patch.dict("os.environ", {
+                "JW_SEMESTER": configured.semester, "JW_USERNAME": configured.username,
+                "GRADE_STATE_SALT": configured.state_salt, "GRADE_STATE_PATH": str(configured.state_path),
+                "COMPLETION_MODE": "count", "EXPECTED_GRADE_COUNT": "1",
+                "MONITOR_UNTIL": configured.monitor_until.isoformat(), "COMPLETION_CHANNELS": "bark",
+            }, clear=True):
+                self.assertTrue(cached_completion())
+
+    def test_failed_completion_notification_retries_before_stopping(self) -> None:
+        with TemporaryDirectory() as directory:
+            configured = replace(settings(), state_path=Path(directory) / "state.json",
+                                 notifications=NotificationSettings(bark_device_key="test-key"))
+            item = Grade(configured.semester, "SYNTH-1", "合成课程", "90", "1", "4", "必修")
+            with patch("check_grades.shanghai_today", return_value=date(2026, 7, 1)), patch(
+                "check_grades.load_settings", return_value=configured,
+            ), patch("check_grades.fetch_grades_with_retry", return_value=[item]) as fetch, patch(
+                "check_grades.send_channel", side_effect=[NotificationError("offline"), None],
+            ) as sender:
+                with self.assertRaisesRegex(RuntimeError, "Notification delivery failed"):
+                    run()
+                self.assertFalse(load_state(configured.state_path, configured.semester).complete)
+                run()
+                run()
+            self.assertEqual(fetch.call_count, 2)
+            self.assertEqual(sender.call_count, 2)
+
+    def test_changed_completion_target_resumes_without_replaying_grades(self) -> None:
+        with TemporaryDirectory() as directory:
+            configured = replace(settings(), state_path=Path(directory) / "state.json",
+                                 notifications=NotificationSettings(bark_device_key="test-key"))
+            item = Grade(configured.semester, "SYNTH-1", "合成课程", "90", "1", "4", "必修")
+            with patch("check_grades.shanghai_today", return_value=date(2026, 7, 1)), patch(
+                "check_grades.load_settings", side_effect=[configured, replace(configured, expected_grade_count=2)],
+            ), patch("check_grades.fetch_grades_with_retry", return_value=[item]) as fetch, patch(
+                "check_grades.send_channel",
+            ) as sender:
+                run()
+                run()
+            self.assertEqual(fetch.call_count, 2)
+            self.assertEqual(sender.call_count, 1)
+            self.assertFalse(load_state(configured.state_path, configured.semester).complete)
+
+    def test_manual_force_check_still_fetches_after_completion(self) -> None:
+        with TemporaryDirectory() as directory:
+            configured = replace(settings(), state_path=Path(directory) / "state.json",
+                                 notifications=NotificationSettings(bark_device_key="test-key"))
+            item = Grade(configured.semester, "SYNTH-1", "合成课程", "90", "1", "4", "必修")
+            with patch("check_grades.shanghai_today", return_value=date(2026, 7, 1)), patch(
+                "check_grades.load_settings", side_effect=[configured, replace(configured, force_check=True)],
+            ), patch("check_grades.fetch_grades_with_retry", return_value=[item]) as fetch, patch(
+                "check_grades.send_channel",
+            ) as sender:
+                run()
+                run()
+            self.assertEqual(fetch.call_count, 2)
+            self.assertEqual(sender.call_count, 1)
+
+    def test_completion_flushes_remaining_email_without_final_report(self) -> None:
+        with TemporaryDirectory() as directory:
+            configured = replace(settings(), final_report_enabled=False,
+                                 report_path=Path(directory) / "report.html",
+                                 notifications=NotificationSettings(email_from="sender@example.com",
+                                     email_password="test-password", email_to="reader@example.com"))
+            item = Grade(configured.semester, "SYNTH-1", "合成课程", "90", "1", "4", "必修")
+            state = MonitorState(configured.semester, initialized=True)
+            with patch("check_grades.send_email") as sender:
+                self.assertEqual(deliver_email(configured, state, [item], True, 1), [])
+            sender.assert_called_once()
+            self.assertEqual(state.email_pending_count, 0)
+
     def test_manual_force_check_ignores_switch_and_date_window(self) -> None:
         configured = replace(
             settings(),

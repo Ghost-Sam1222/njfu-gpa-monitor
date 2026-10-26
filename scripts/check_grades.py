@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import re
 import sys
 import time
@@ -10,6 +11,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from config import ConfigError, Settings, load_settings
+from completion import completion_key
 from grade_source import GradeSourceError, fetch_grades
 from models import Grade
 from notifications import NotificationError, send_channel, send_email
@@ -161,7 +163,9 @@ def deliver_email(
     # Legacy email states contain only the marker, so their pending work is retained.
     if delivered - {completion_marker} and not current_hashes - delivered:
         state.email_pending_count = 0
-    threshold_reached = state.email_pending_count >= settings.email_batch_size
+    threshold_reached = state.email_pending_count >= settings.email_batch_size or (
+        detected_complete and state.email_pending_count > 0
+    )
     final_due = (
         detected_complete
         and settings.final_report_enabled
@@ -209,6 +213,20 @@ def run() -> None:
     channels = settings.notifications.realtime_channels()
     if not channels and not settings.notifications.email_enabled():
         raise MonitorError("Configure at least one notification channel.")
+    key = completion_key(
+        semester=settings.semester, mode=settings.completion_mode, count=settings.expected_grade_count,
+        names=settings.expected_course_names,
+        until=settings.monitor_until.isoformat() if settings.monitor_until else "",
+        channels=channels + (("email",) if settings.notifications.email_enabled() else ()),
+        final_report=settings.final_report_enabled, salt=settings.state_salt, username=settings.username,
+    )
+    same_policy = hmac.compare_digest(state.completion_key, key)
+    if state.complete and same_policy and not settings.force_check:
+        print("Monitoring completed under the current configuration; skipping JWXT login.")
+        return
+    if state.completion_key and not same_policy:
+        for delivered in state.delivered_by_channel.values():
+            delivered.discard(f"completion:{settings.semester}")
 
     try:
         grades = fetch_grades_with_retry(settings)
@@ -238,6 +256,7 @@ def run() -> None:
     failures.extend(deliver_email(settings, state, grades, detected_complete, new_count))
     state.observed_hashes = set(current_hashes)
     state.complete = detected_complete and not failures
+    state.completion_key = key
     save_state(settings.state_path, state)
     print(f"Grade check finished: changed={new_count > 0} complete={state.complete}.")
     if failures:

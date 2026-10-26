@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 @dataclass
@@ -16,6 +17,7 @@ class MonitorState:
     delivered_by_channel: dict[str, set[str]] = field(default_factory=dict)
     email_pending_count: int = 0
     complete: bool = False
+    completion_key: str = ""
     consecutive_failures: int = 0
 
     def delivered(self, channel: str) -> set[str]:
@@ -43,6 +45,8 @@ def load_state(path: Path, semester: str) -> MonitorState:
                    for items in deliveries.values())
         or not all(type(value) is int and value >= 0 for value in counters)
         or not all(type(raw[name]) is bool for name in ("initialized", "complete") if name in raw)
+        or not isinstance(raw.get("completion_key", ""), str)
+        or (raw.get("completion_key") and re.fullmatch(r"[0-9a-f]{64}", raw["completion_key"]) is None)
     ):
         return MonitorState(semester=semester)
     delivered = {channel: set(items) for channel, items in deliveries.items()}
@@ -54,6 +58,7 @@ def load_state(path: Path, semester: str) -> MonitorState:
         delivered_by_channel=delivered,
         email_pending_count=int(raw.get("email_pending_count", 0)),
         complete=bool(raw.get("complete", False)),
+        completion_key=raw.get("completion_key", ""),
         consecutive_failures=int(raw.get("consecutive_failures", 0)),
     )
 
@@ -71,6 +76,7 @@ def save_state(path: Path, state: MonitorState) -> None:
         },
         "email_pending_count": state.email_pending_count,
         "complete": state.complete,
+        "completion_key": state.completion_key,
         "consecutive_failures": state.consecutive_failures,
     }
     temporary = path.with_suffix(path.suffix + ".tmp")

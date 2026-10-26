@@ -633,7 +633,7 @@ async def suggestion_for_setup(settings: ExamSettings) -> dict[str, Any]:
     if not result.complete:
         payload["error"] = "部分考试项目查询失败，不能自动采用建议日期。"
     elif not result.projects:
-        payload["error"] = "该学期的考试项目尚未发布，请稍后再查或手动填写停止日期。"
+        payload["error"] = "该学期未返回考试项目，可能尚未发布；请稍后再查或手动填写停止日期，不能据此判断没有考试。"
     elif not result.exams:
         payload["error"] = "考试项目已发布，但当前账号没有可用的考试日期；请核对学期或手动填写停止日期。"
     return payload

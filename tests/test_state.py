@@ -17,7 +17,9 @@ class StateTests(unittest.TestCase):
                    {"semester": semester, "delivered_by_channel": []},
                    {"semester": semester, "delivered_by_channel": {"bark": [{}]}},
                    {"semester": semester, "email_pending_count": "invalid"},
-                   {"semester": semester, "consecutive_failures": -1}]
+                   {"semester": semester, "consecutive_failures": -1},
+                   {"semester": semester, "completion_key": 1},
+                   {"semester": semester, "completion_key": "无效缓存"}]
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.json"
             for payload in invalid:

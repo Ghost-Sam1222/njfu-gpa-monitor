@@ -624,6 +624,7 @@ class Handler(BaseHTTPRequestHandler):
 
         for workflow in (
             "check-grades.yml",
+            "verify-source.yml",
             "test-notifications.yml",
             "query-exams.yml",
             "sync-upstream.yml",

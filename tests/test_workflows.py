@@ -8,6 +8,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class WorkflowPolicyTests(unittest.TestCase):
+    def test_completed_monitor_skips_before_dependency_install(self) -> None:
+        workflow = (ROOT / ".github/workflows/check-grades.yml").read_text(encoding="utf-8")
+        preflight = workflow.split("- name: Preflight", 1)[1].split("- name: Set up Python", 1)[0]
+        self.assertIn("if python3 scripts/completion.py; then", preflight)
+        self.assertIn("GRADE_STATE_SALT:", preflight)
+        self.assertNotIn("JW_PASSWORD:", preflight)
+
+    def test_login_verification_is_manual_and_has_no_notification_credentials(self) -> None:
+        workflow = (ROOT / ".github/workflows/verify-source.yml").read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotIn("schedule:", workflow)
+        self.assertNotIn("BARK_DEVICE_KEY", workflow)
+        self.assertNotIn("GRADE_STATE_SALT", workflow)
     def test_disabled_scheduled_monitor_skips_before_required_configuration(self) -> None:
         workflow = (ROOT / ".github/workflows/check-grades.yml").read_text(encoding="utf-8")
         preflight = workflow.split("- name: Preflight", 1)[1].split("- name: Set up Python", 1)[0]
