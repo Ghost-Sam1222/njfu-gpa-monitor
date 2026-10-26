@@ -672,6 +672,8 @@ class Handler(BaseHTTPRequestHandler):
                 "test_started": test_started,
                 "test_status": test_status,
                 "test_url": test_url,
+                "login_verified": bool(submitted_names & {"JW_USERNAME", "JW_PASSWORD", "JW_COOKIE"}),
+                "monitor_enabled": monitor_enabled,
                 "repository_url": f"https://github.com/{repository}",
                 "actions_url": f"https://github.com/{repository}/actions",
             },
