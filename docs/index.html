@@ -20,14 +20,15 @@
       <p>登录教务系统、选择检查频率和通知方式。配置直接保存在你的 GitHub 仓库，无需下载代码或使用终端。</p>
       <form class="launch" id="launch-form">
         <div class="field-grid">
-          <label>你的 GitHub 用户名<input id="github-user" required autocomplete="username" pattern="[A-Za-z0-9-]+" placeholder="例如 Ghost-Sam1222"></label>
+          <label>仓库所有者<input id="github-user" required autocomplete="username" pattern="[A-Za-z0-9-]+" placeholder="通常是你的 GitHub 用户名"></label>
           <label>新仓库名称<input id="repository-name" required value="njfu-gpa-monitor" pattern="[A-Za-z0-9._-]+"></label>
         </div>
         <p class="privacy-choice">在 GitHub 创建页选择 Private 可隐藏仓库；选择 Public 可使用免费的标准 Actions，但 Variables 与运行日志会公开。两种方式都不会公开 Secrets。</p>
-        <div class="button-row">
+        <div class="button-row" aria-describedby="launch-status">
           <a class="button secondary" id="create-repository" href="https://github.com/new?template_name=njfu-gpa-monitor&amp;template_owner=Ghost-Sam1222&amp;name=njfu-gpa-monitor" target="_blank" rel="noopener">1. 创建监控仓库</a>
-          <button class="button" type="submit">2. 打开云端设置</button>
+          <button class="button" type="submit">2. 创建完成后打开设置</button>
         </div>
+        <p class="privacy-choice" id="launch-status">GitHub 会在新标签页创建你的仓库。看到仓库首页后，回到这里点击第 2 步；这里填写的所有者和仓库名必须与创建结果完全一致。</p>
       </form>
     </div>
     <img class="art" src="assets/njfu-gpa-icon.png" alt="NJFU GPA Monitor 图标">
@@ -47,8 +48,10 @@
   const [sourceOwner,templateName]=source.split('/');
   const repositoryInput=document.querySelector('#repository-name');
   const createLink=document.querySelector('#create-repository');
+  const launchStatus=document.querySelector('#launch-status');
   const updateCreateLink=()=>{const repositoryName=repositoryInput.value.trim()||templateName;createLink.href=`https://github.com/new?template_name=${encodeURIComponent(templateName)}&template_owner=${encodeURIComponent(sourceOwner)}&name=${encodeURIComponent(repositoryName)}`;};
   repositoryInput.addEventListener('input',updateCreateLink);
+  createLink.addEventListener('click',()=>{launchStatus.textContent='请在 GitHub 完成仓库创建。若你在创建页改了所有者或名称，也要回到本页同步修改，再点击第 2 步。';});
   updateCreateLink();
   document.querySelector('#source-repository').href=`https://github.com/${source}`;
   document.querySelector('#launch-form').addEventListener('submit',event=>{

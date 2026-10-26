@@ -62,6 +62,7 @@ ALLOWED_NJFU_HOSTS = {
     "uia.njfu.edu.cn",
 }
 EXAM_QUERY_PATH = "/jsxsd/xsks/xsksap_query"
+EXAM_PROJECT_PATH = "/jsxsd/xsks/xsksap_ksmc"
 EXAM_LIST_PATH = "/jsxsd/xsks/xsksap_list"
 
 
@@ -213,8 +214,11 @@ async def _discover_exam_projects(page: Any, semester: str) -> list[ExamProject]
     selected = await page.select_option("#xnxqid", semester)
     if semester not in selected:
         raise ExamParseError("The requested semester is unavailable in the exam query form.")
-    await page.evaluate(
-        """() => {
+    async with page.expect_response(
+        lambda response: EXAM_PROJECT_PATH in response.url
+    ) as response_info:
+        await page.evaluate(
+            """() => {
             const project = document.querySelector('#kw0401id');
             if (!project || typeof onckKsmc !== 'function') {
                 throw new Error('exam project loader unavailable');
@@ -222,15 +226,11 @@ async def _discover_exam_projects(page: Any, semester: str) -> list[ExamProject]
             project.innerHTML = '<option value="">--请选择--</option>';
             onckKsmc();
         }"""
-    )
-    await page.wait_for_timeout(1800)
-    items = await page.eval_on_selector_all(
-        "#kw0401id option",
-        """options => options
-            .map(option => ({kw0401id: option.value.trim(), ksmc: option.textContent.trim()}))
-            .filter(item => item.kw0401id && item.ksmc)""",
-    )
-    return parse_exam_projects(items)
+        )
+    response = await response_info.value
+    if not response.ok:
+        raise ExamSourceError("The exam project request failed.")
+    return parse_exam_projects_text(await response.text())
 
 
 def parse_exam_projects_text(text: str) -> list[ExamProject]:
@@ -581,7 +581,16 @@ def describe_result(result: ExamFetchResult) -> dict[str, Any]:
         reason: result.failure_reasons.count(reason)
         for reason in sorted(set(result.failure_reasons))
     }
+    if not result.complete:
+        status = "incomplete"
+    elif not result.projects:
+        status = "not_published"
+    elif not result.exams:
+        status = "empty"
+    else:
+        status = "ready"
     return {
+        "status": status,
         "exam_count": len(result.exams),
         "project_count": len(result.projects),
         "latest_exam_date": latest.isoformat() if latest else None,
@@ -595,8 +604,22 @@ def describe_result(result: ExamFetchResult) -> dict[str, Any]:
 async def suggestion_for_setup(settings: ExamSettings) -> dict[str, Any]:
     try:
         result = await fetch_exams(settings)
+    except ExamAuthenticationError:
+        return {
+            "status": "authentication_required",
+            "semester": getattr(settings, "semester", ""),
+            "exam_count": 0,
+            "project_count": 0,
+            "latest_exam_date": None,
+            "suggested_monitor_until": None,
+            "complete": False,
+            "failed_project_count": 0,
+            "error": "教务登录已失效，请先重新验证账号。",
+        }
     except ExamSourceError:
         return {
+            "status": "unavailable",
+            "semester": getattr(settings, "semester", ""),
             "exam_count": 0,
             "project_count": 0,
             "latest_exam_date": None,
@@ -606,10 +629,13 @@ async def suggestion_for_setup(settings: ExamSettings) -> dict[str, Any]:
             "error": "无法读取考试安排，请检查教务登录状态后重试。",
         }
     payload = describe_result(result)
+    payload["semester"] = getattr(settings, "semester", "")
     if not result.complete:
         payload["error"] = "部分考试项目查询失败，不能自动采用建议日期。"
+    elif not result.projects:
+        payload["error"] = "该学期的考试项目尚未发布，请稍后再查或手动填写停止日期。"
     elif not result.exams:
-        payload["error"] = "该学期暂未查询到考试安排，请稍后重试或手动填写停止日期。"
+        payload["error"] = "考试项目已发布，但当前账号没有可用的考试日期；请核对学期或手动填写停止日期。"
     return payload
 
 

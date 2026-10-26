@@ -13,6 +13,14 @@ class GradeSourceError(RuntimeError):
     pass
 
 
+class GradeAuthenticationError(GradeSourceError):
+    pass
+
+
+class GradeParseError(GradeSourceError):
+    pass
+
+
 ALLOWED_NJFU_HOSTS = {
     "jwxt.njfu.edu.cn",
     "authserver.njfu.edu.cn",
@@ -35,6 +43,18 @@ def _is_login_url(url: str) -> bool:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
     return host in {"authserver.njfu.edu.cn", "uia.njfu.edu.cn"} and "login" in parsed.path.lower()
+
+
+def _looks_like_login_page(html: str) -> bool:
+    lowered = html.lower()
+    has_credentials = (
+        re.search(r"(?:name|id)\s*=\s*['\"]?username\b", lowered) is not None
+        and re.search(r"(?:name|id)\s*=\s*['\"]?password\b", lowered) is not None
+    )
+    unified_login = (
+        "统一身份认证" in html or "unified identity authentication" in lowered
+    ) and "login" in lowered
+    return has_credentials or unified_login
 
 
 def _cookie_entries(cookie_header: str, base_url: str) -> list[dict[str, str]]:
@@ -84,7 +104,7 @@ async def _fetch_grades(settings: Settings) -> list[Grade]:
             await page.goto(login_url, wait_until="domcontentloaded", timeout=60000)
             if _is_login_url(page.url):
                 if not settings.username or not settings.password:
-                    raise GradeSourceError("JW_COOKIE expired; configure JW_USERNAME and JW_PASSWORD as fallback.")
+                    raise GradeAuthenticationError("Cookie 已失效，请填写学号和密码后重新验证。")
                 _require_njfu_url(page.url)
                 await page.fill("#username", settings.username)
                 await page.fill("#password", settings.password)
@@ -93,16 +113,18 @@ async def _fetch_grades(settings: Settings) -> list[Grade]:
                 await page.wait_for_timeout(1200)
             _require_njfu_url(page.url)
             if _is_login_url(page.url):
-                raise GradeSourceError("Login did not complete; verify credentials or interactive verification requirements.")
+                raise GradeAuthenticationError("登录未完成，请检查账号密码；若学校要求验证码，请稍后重试。")
 
             await page.goto(grade_url, wait_until="domcontentloaded", timeout=60000)
             _require_njfu_url(page.url)
+            if _is_login_url(page.url):
+                raise GradeAuthenticationError("登录会话在读取成绩前已失效，请重新验证。")
             html = await post_grade_query(page, grade_url, settings.semester)
+            if _looks_like_login_page(html):
+                raise GradeAuthenticationError("登录会话在查询成绩时已失效，请重新验证。")
             if not has_grade_table(html):
                 html = await page.content()
-            if not has_grade_table(html):
-                raise GradeSourceError("Could not parse the grade table.")
-            grades = parse_grades_html(html)
+            grades = parse_grade_response(html)
             semester_rows = [grade for grade in grades if grade.semester == settings.semester]
             return semester_rows if any(grade.semester for grade in grades) else grades
         finally:
@@ -229,6 +251,19 @@ def parse_grades_html(html: str) -> list[Grade]:
         if grade.course_name and grade.score:
             grades.append(grade)
     return grades
+
+
+def parse_grade_response(html: str) -> list[Grade]:
+    if _looks_like_login_page(html):
+        raise GradeAuthenticationError("登录会话已失效，请重新验证。")
+    if not has_grade_table(html):
+        raise GradeParseError("教务系统已响应，但成绩表结构无法识别；请稍后重试或报告兼容性问题。")
+    parser = GradeTableParser()
+    parser.feed(html)
+    indexes = _header_indexes(parser.rows[0] if parser.rows else [])
+    if not {"course_name", "score"}.issubset(indexes):
+        raise GradeParseError("教务系统成绩表缺少必要列；请稍后重试或报告兼容性问题。")
+    return parse_grades_html(html)
 
 
 def has_grade_table(html: str) -> bool:

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import io
 import json
+import asyncio
 import unittest
 from contextlib import redirect_stdout
 from contextlib import redirect_stderr
 from datetime import date, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from exam_source import (
@@ -101,10 +103,15 @@ class ExamRequestTests(unittest.IsolatedAsyncioTestCase):
         page.locator.return_value.count = AsyncMock(return_value=1)
         page.select_option = AsyncMock(return_value=["2025-2026-2"])
         page.evaluate = AsyncMock()
-        page.wait_for_timeout = AsyncMock()
-        page.eval_on_selector_all = AsyncMock(return_value=[
-            {"kw0401id": "p1", "ksmc": "期末考试（新庄校区）"}
-        ])
+        response = MagicMock(ok=True)
+        response.text = AsyncMock(return_value='[{"kw0401id":"p1","ksmc":"期末考试（新庄校区）"}]')
+        response_value = asyncio.Future()
+        response_value.set_result(response)
+        response_info = SimpleNamespace(value=response_value)
+        response_context = MagicMock()
+        response_context.__aenter__ = AsyncMock(return_value=response_info)
+        response_context.__aexit__ = AsyncMock(return_value=False)
+        page.expect_response.return_value = response_context
         projects = await _discover_exam_projects(page, "2025-2026-2")
         self.assertEqual(projects, [ExamProject("p1", "期末考试（新庄校区）")])
         self.assertIn("onckKsmc", page.evaluate.await_args.args[0])
@@ -232,11 +239,23 @@ class SuggestionTests(unittest.TestCase):
         self.assertEqual(payload["project_count"], 2)
         self.assertEqual(payload["suggested_monitor_until"], "2026-08-09")
         self.assertTrue(payload["complete"])
+        self.assertEqual(payload["status"], "ready")
+
+    def test_no_projects_means_schedule_not_published(self) -> None:
+        payload = describe_result(ExamFetchResult((), ()))
+        self.assertEqual(payload["status"], "not_published")
+        self.assertTrue(payload["complete"])
+
+    def test_published_projects_without_rows_are_distinct(self) -> None:
+        payload = describe_result(ExamFetchResult((), (ExamProject("p1", "期末考试"),)))
+        self.assertEqual(payload["status"], "empty")
+        self.assertTrue(payload["complete"])
 
     def test_failed_project_makes_result_incomplete(self) -> None:
         project = ExamProject("p1", "期末考试")
         payload = describe_result(ExamFetchResult((), (project,), (project,), ("parse",)))
         self.assertFalse(payload["complete"])
+        self.assertEqual(payload["status"], "incomplete")
         self.assertEqual(payload["failed_project_count"], 1)
         self.assertEqual(payload["failure_reasons"], {"parse": 1})
 
@@ -260,7 +279,19 @@ class SuggestionTests(unittest.TestCase):
         with patch("exam_source.fetch_exams", new=AsyncMock(side_effect=ExamParseError("private response"))):
             result = __import__("asyncio").run(suggestion_for_setup(object()))
         self.assertFalse(result["complete"])
+        self.assertEqual(result["status"], "unavailable")
         self.assertNotIn("private response", result["error"])
+
+    def test_setup_authentication_failure_has_actionable_status(self) -> None:
+        settings = type("Settings", (), {"semester": "2025-2026-2"})()
+        with patch(
+            "exam_source.fetch_exams",
+            new=AsyncMock(side_effect=ExamAuthenticationError("private login detail")),
+        ):
+            result = __import__("asyncio").run(suggestion_for_setup(settings))
+        self.assertEqual(result["status"], "authentication_required")
+        self.assertEqual(result["semester"], "2025-2026-2")
+        self.assertNotIn("private login detail", result["error"])
 
 
 class CLITests(unittest.TestCase):

@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from grade_source import GradeSourceError, fetch_grades
+from grade_source import GradeAuthenticationError, GradeParseError, GradeSourceError, fetch_grades
 from exam_source import ExamSourceError, suggestion_for_setup
 from config import infer_semester
 
@@ -426,7 +426,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": "请填写学期和账号密码，或填写 Cookie。"})
                 return
             try:
-                asyncio.run(
+                grades = asyncio.run(
                     fetch_grades(
                         SimpleNamespace(
                             base_url="https://jwxt.njfu.edu.cn",
@@ -437,11 +437,24 @@ class Handler(BaseHTTPRequestHandler):
                         )
                     )
                 )
-            except GradeSourceError as exc:
-                self._json(400, {"ok": False, "error": str(exc)})
+            except GradeAuthenticationError as exc:
+                self._json(401, {"ok": False, "status": "authentication_required", "error": str(exc)})
+                return
+            except GradeParseError as exc:
+                self._json(502, {"ok": False, "status": "incompatible_response", "error": str(exc)})
+                return
+            except GradeSourceError:
+                self._json(502, {"ok": False, "status": "unavailable", "error": "教务系统暂时无法完成成绩查询，请稍后重试。"})
+                return
+            except Exception:
+                self._json(502, {"ok": False, "status": "unavailable", "error": "验证过程暂时不可用，请稍后重试。"})
                 return
             self.server.verified_login_digest = login_digest(username, password, cookie, semester)
-            self._json(200, {"ok": True})
+            self._json(200, {
+                "ok": True,
+                "status": "ready" if grades else "empty",
+                "message": "教务登录和本学期成绩查询均已验证。" if grades else "教务登录和成绩接口已验证；本学期当前暂无已公布成绩。",
+            })
             return
         if self.path == "/api/exam-suggestion":
             username = str(payload.get("username", "")).strip()
@@ -466,7 +479,12 @@ class Handler(BaseHTTPRequestHandler):
             except (GradeSourceError, ExamSourceError) as exc:
                 self._json(400, {"ok": False, "error": str(exc)})
                 return
-            self._json(200, {"ok": True, **result})
+            if result["status"] == "authentication_required":
+                self._json(401, {"ok": False, **result})
+            elif result["status"] == "unavailable":
+                self._json(502, {"ok": False, **result})
+            else:
+                self._json(200, {"ok": True, **result})
             return
         repository = str(payload.get("repository", "")).strip()
         if not REPOSITORY_PATTERN.fullmatch(repository):
@@ -476,10 +494,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"ok": False, "error": "云端设置只能配置当前 Codespace 对应的仓库。"})
             return
         if shutil.which("gh") is None:
-            self._json(400, {"ok": False, "error": "GitHub CLI is not installed."})
+            self._json(400, {"ok": False, "error": "GitHub 配置组件未就绪，请关闭本页并从云端入口重新打开。"})
             return
         if gh("auth", "status", "--hostname", "github.com").returncode != 0:
-            self._json(400, {"ok": False, "error": "Run gh auth login -h github.com first."})
+            self._json(400, {"ok": False, "error": "GitHub 授权已失效，请关闭本页并从云端入口重新打开。"})
             return
 
         existing_repository = gh("repo", "view", repository, "--json", "nameWithOwner")
