@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import unittest
+import io
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from setup_wizard import (
+    Handler,
     cloud_target_allowed,
     codespace_host,
     has_notification_channel,
@@ -20,6 +23,21 @@ from setup_wizard import (
 
 
 class SetupWizardTests(unittest.TestCase):
+    def test_summary_endpoint_accepts_missing_input_without_affecting_monitor(self) -> None:
+        body = json.dumps({"semester": "2026-2027-1"}).encode()
+        handler = Handler.__new__(Handler)
+        handler.path = "/api/term-summary"
+        handler.server = SimpleNamespace(csrf_token="local-test-token")
+        handler.headers = {"X-CSRF-Token": "local-test-token", "Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+        handler._is_trusted_request = MagicMock(return_value=True)
+        handler._json = MagicMock()
+        handler.do_POST()
+        status, result = handler._json.call_args.args
+        self.assertEqual(status, 200)
+        self.assertEqual(result["status"], "missing")
+        self.assertNotIn("MONITOR_UNTIL", result)
+
     def test_codespace_suggests_its_current_repository(self) -> None:
         environment = {
             "CODESPACES": "true",

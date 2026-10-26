@@ -24,6 +24,7 @@ from urllib.request import Request, urlopen
 from grade_source import GradeAuthenticationError, GradeParseError, GradeSourceError, fetch_grades
 from exam_source import ExamSourceError, suggestion_for_setup
 from config import infer_semester
+from term_summary import inspect_term_summary
 
 ROOT = Path(__file__).resolve().parents[1]
 PAGE = ROOT / "setup" / "index.html"
@@ -388,7 +389,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._is_trusted_request():
             self.send_error(403)
             return
-        if self.path not in {"/api/apply", "/api/verify-jw", "/api/telegram-chat-id", "/api/exam-suggestion"}:
+        if self.path not in {"/api/apply", "/api/verify-jw", "/api/telegram-chat-id", "/api/exam-suggestion", "/api/term-summary"}:
             self.send_error(404)
             return
         if self.headers.get("X-CSRF-Token") != self.server.csrf_token:
@@ -405,6 +406,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not isinstance(payload, dict):
             self._json(400, {"ok": False, "error": "Invalid configuration payload."})
+            return
+        if self.path == "/api/term-summary":
+            result = inspect_term_summary(payload.get("summary"), str(payload.get("semester", "")))
+            self._json(200, {"ok": True, **result})
             return
         if self.path == "/api/telegram-chat-id":
             try:

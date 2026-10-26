@@ -24,6 +24,7 @@
       <label id="expected-count-field" hidden>预期成绩数量<input name="EXPECTED_GRADE_COUNT" type="number" min="1" value="1"></label>
       <label class="wide" id="expected-names-field" hidden>预期课程名称（按课程判断时填写，逗号分隔）<textarea name="EXPECTED_COURSE_NAMES"></textarea></label>
       <details class="wide"><summary>使用 Cookie 登录（高级）</summary><label>Cookie 会过期，通常无需填写<textarea class="secret" name="JW_COOKIE" autocomplete="off"></textarea></label></details>
+      <details class="wide"><summary>已有课表摘要（可选）</summary><label>课表项目导出的 term-summary.json<input id="term-summary-file" type="file" accept=".json,application/json"></label><p class="note" id="term-summary-result" role="status" style="margin-top:12px">未导入课表摘要，不影响原有监控。结课日只作参考，考试安排和你填写的日期优先。</p></details>
     </div></section>
     <section><h2>2. 检查频率</h2><div class="segments">
       <label><input type="radio" name="CHECK_INTERVAL_HOURS" value="2">2 小时</label><label><input type="radio" name="CHECK_INTERVAL_HOURS" value="3">3 小时</label><label><input type="radio" name="CHECK_INTERVAL_HOURS" value="6" checked>6 小时</label><label><input type="radio" name="CHECK_INTERVAL_HOURS" value="12">12 小时</label><label><input type="radio" name="CHECK_INTERVAL_HOURS" value="24">每天</label>
@@ -41,6 +42,30 @@
 </main>
 <script>
   const csrf='__CSRF_TOKEN__'; const form=document.querySelector('#setup-form'); const message=document.querySelector('#message'); const button=document.querySelector('#apply'); const verify=document.querySelector('#verify'); const discoverTelegram=document.querySelector('#discover-telegram'); const completionMode=form.querySelector('[name=COMPLETION_MODE]'); const expectedCountField=document.querySelector('#expected-count-field'); const expectedNamesField=document.querySelector('#expected-names-field'); const syncCompletionFields=()=>{expectedCountField.hidden=completionMode.value!=='count';expectedNamesField.hidden=completionMode.value!=='names';}; completionMode.addEventListener('change',syncCompletionFields); syncCompletionFields();
+  const termSummaryFile=document.querySelector('#term-summary-file');
+  const termSummaryResult=document.querySelector('#term-summary-result');
+  const semesterField=form.querySelector('[name=JW_SEMESTER]');
+  let termSummaryRequest=0;
+  semesterField.addEventListener('input',()=>{termSummaryRequest++;termSummaryFile.value='';termSummaryResult.textContent='学期已变更，请重新导入对应摘要；原有开始和停止日期未修改。';});
+  termSummaryFile.addEventListener('change',async()=>{
+    const request=++termSummaryRequest;
+    const file=termSummaryFile.files[0];
+    if(!file){termSummaryResult.textContent='未导入课表摘要，不影响原有监控。';return;}
+    termSummaryResult.textContent='正在校验课表摘要…';
+    try{
+      if(file.size>32768)throw new Error('摘要文件过大，请选择课表项目导出的 term-summary.json。');
+      const summary=JSON.parse(await file.text());
+      if(request!==termSummaryRequest)return;
+      const response=await fetch('/api/term-summary',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({summary,semester:semesterField.value})});
+      const result=await response.json();
+      if(request!==termSummaryRequest)return;
+      if(!response.ok||!result.ok)throw new Error('摘要校验失败，请重试。');
+      if(result.status!=='ready'){termSummaryResult.textContent=result.message;return;}
+      const source=result.term_source==='school_reported'?'学校报告的学期':'人工配置的学期（不是学校确认）';
+      const timetable=result.timetable_source==='school_web'?'学校网页课表':'学校 App 接口课表';
+      termSummaryResult.textContent=[source,timetable,`首周周一：${result.first_monday}`,result.last_class_date?`课表中最后一节课：${result.last_class_date}`:'摘要没有课程日期',result.has_manual_adjustments?'包含人工调课':'未标记人工调课',`生成时间：${result.generated_at}`,result.message].join('；');
+    }catch(error){if(request===termSummaryRequest)termSummaryResult.textContent=error instanceof SyntaxError?'摘要不是有效 JSON，请重新导出。':error.message;}
+  });
   fetch('/api/status').then(r=>{if(!r.ok)throw new Error('status');return r.json();}).then(s=>{const repository=document.querySelector('[name=repository]');repository.value=s.repository||'';repository.readOnly=Boolean(s.cloud);Object.entries(s.variables||{}).forEach(([name,value])=>{const fields=form.querySelectorAll(`[name="${name}"]`);fields.forEach(field=>{if(field.type==='radio')field.checked=field.value===value;else if(field.type==='checkbox')field.checked=value==='true';else field.value=value;});});syncCompletionFields();const semester=document.querySelector('[name=JW_SEMESTER]');if(!semester.value)semester.value=s.semester||'';const ready=s.gh_installed&&s.gh_authenticated;button.disabled=!ready;document.querySelector('#gh-status').textContent=!s.gh_installed?'GitHub 组件未就绪':s.gh_authenticated?(s.cloud?'GitHub 云端已连接':'GitHub CLI 已登录'):'GitHub 授权已失效';if(!ready){message.className='message error';message.textContent=s.cloud?'请关闭本页并从云端入口重新打开设置。':'请先完成 GitHub 登录后刷新本页。';}}).catch(()=>{document.querySelector('#gh-status').textContent='GitHub 连接失败';message.className='message error';message.textContent='无法读取设置状态，请刷新页面；仍失败时请关闭本页并从云端入口重新打开。';button.disabled=true;});
   verify.addEventListener('click',async()=>{verify.disabled=true;message.className='message';message.textContent='正在安全验证教务登录和成绩接口…';const data=new FormData(form);try{const response=await fetch('/api/verify-jw',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({username:data.get('JW_USERNAME'),password:data.get('JW_PASSWORD'),cookie:data.get('JW_COOKIE'),semester:data.get('JW_SEMESTER')})});const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'验证失败');message.className='message ok';message.textContent=result.message||'教务登录和本学期成绩查询均已验证。';}catch(error){message.className='message error';message.textContent=error.message;}finally{verify.disabled=false;}});
   discoverTelegram.addEventListener('click',async()=>{discoverTelegram.disabled=true;message.className='message';message.textContent='正在从 Telegram 读取最近会话…';const token=form.querySelector('[name=TELEGRAM_BOT_TOKEN]').value;try{const response=await fetch('/api/telegram-chat-id',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({token})});const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'获取失败');const chats=result.chats||[];if(chats.length===1){form.querySelector('[name=TELEGRAM_CHAT_ID]').value=chats[0].id;message.className='message ok';message.textContent=`已填入 Telegram Chat ID（${chats[0].label}）。`;}else{message.className='message';message.textContent=`找到多个会话，请选择对应 ID：${chats.map(chat=>`${chat.label}=${chat.id}`).join('；')}`;}}catch(error){message.className='message error';message.textContent=error.message;}finally{discoverTelegram.disabled=false;}});
