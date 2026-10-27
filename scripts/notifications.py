@@ -10,6 +10,7 @@ from email.header import Header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
+from http.client import HTTPException
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
@@ -147,7 +148,7 @@ def _request(url: str, *, payload: Any = None, body: bytes | None = None, header
         raise NotificationError(f"HTTP {exc.code}") from exc
     except URLError as exc:
         raise NotificationError(f"network request failed: {type(exc.reason).__name__}") from exc
-    except (OSError, TimeoutError, TypeError, ValueError) as exc:
+    except (HTTPException, OSError, TimeoutError, TypeError, ValueError) as exc:
         raise NotificationError(f"network request failed: {type(exc).__name__}") from exc
 
 

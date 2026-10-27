@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -70,7 +71,7 @@ def send_bark(config: BarkConfig, title: str, body: str) -> None:
         raise BarkError(f"HTTP {exc.code}") from exc
     except URLError as exc:
         raise BarkError(f"network request failed: {type(exc.reason).__name__}") from exc
-    except (OSError, TimeoutError, TypeError, ValueError) as exc:
+    except (HTTPException, OSError, TimeoutError, TypeError, ValueError) as exc:
         raise BarkError(f"network request failed: {type(exc).__name__}") from exc
 
     try:
