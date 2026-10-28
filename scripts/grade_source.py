@@ -122,8 +122,6 @@ async def _fetch_grades(settings: Settings) -> list[Grade]:
             html = await post_grade_query(page, grade_url, settings.semester)
             if _looks_like_login_page(html):
                 raise GradeAuthenticationError("登录会话在查询成绩时已失效，请重新验证。")
-            if not has_grade_table(html):
-                html = await page.content()
             grades = parse_grade_response(html)
             semester_rows = [grade for grade in grades if grade.semester == settings.semester]
             return semester_rows if any(grade.semester for grade in grades) else grades
