@@ -168,9 +168,9 @@ async def _fetch_exams(settings: ExamSettings) -> ExamFetchResult:
                 stage = "fill_username"
                 await page.fill("#username", settings.username)
                 stage = "fill_password"
-                await page.fill("#password", settings.password)
+                await page.fill('#passwordShow:visible, #password:visible', settings.password)
                 stage = "submit_login"
-                await page.click('button[type="submit"]')
+                await page.click('#fm1 #passbutton:visible, button[type="submit"]:visible')
                 stage = "wait_login"
                 await page.wait_for_load_state("domcontentloaded", timeout=60000)
                 await page.wait_for_timeout(1200)
