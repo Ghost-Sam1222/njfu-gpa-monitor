@@ -249,7 +249,20 @@ async def _discover_exam_projects(page: Any, semester: str) -> list[ExamProject]
     response = await response_info.value
     if not response.ok:
         raise ExamSourceError("The exam project request failed.")
-    return parse_exam_projects_text(await response.text())
+    try:
+        return parse_exam_projects_text(await response.text())
+    except ExamParseError:
+        # Some school pages decode the project response in their own loader.
+        rendered = await page.wait_for_function(
+            """semester => {
+                if (document.querySelector('#xnxqid')?.value !== semester) return false;
+                const items = Array.from(document.querySelectorAll('#kw0401id option'))
+                    .filter(option => option.value.trim() && option.textContent.trim())
+                    .map(option => ({kw0401id: option.value, ksmc: option.textContent}));
+                return items.length ? items : false;
+            }""", arg=semester, timeout=10000,
+        )
+        return parse_exam_projects(await rendered.json_value())
 
 
 def parse_exam_projects_text(text: str) -> list[ExamProject]:

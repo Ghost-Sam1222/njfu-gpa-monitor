@@ -116,6 +116,13 @@ class ExamRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(projects, [ExamProject("p1", "期末考试（新庄校区）")])
         self.assertIn("onckKsmc", page.evaluate.await_args.args[0])
 
+        response.text.return_value = "not JSON"
+        rendered = MagicMock()
+        rendered.json_value = AsyncMock(return_value=[{"kw0401id": "p2", "ksmc": "测试项目"}])
+        page.wait_for_function = AsyncMock(return_value=rendered)
+        self.assertEqual(await _discover_exam_projects(page, "2025-2026-2"),
+                         [ExamProject("p2", "测试项目")])
+
     async def test_project_discovery_requires_exam_form(self) -> None:
         page = MagicMock()
         page.locator.return_value.count = AsyncMock(return_value=0)
