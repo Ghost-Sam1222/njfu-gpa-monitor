@@ -24,7 +24,7 @@ class ExamSourceError(RuntimeError):
 
 class ExamStageError(ExamSourceError):
     def __init__(self, stage: str, reason: str) -> None:
-        self.stage = stage if stage in {"open_login", "login", "open_exam", "discover_projects"} else "browser"
+        self.stage = stage if stage in {"open_login", "login", "fill_username", "fill_password", "submit_login", "wait_login", "open_exam", "discover_projects"} else "browser"
         self.reason = reason if reason in {"timeout", "browser"} else "browser"
         super().__init__("Exam query unavailable")
 
@@ -165,9 +165,13 @@ async def _fetch_exams(settings: ExamSettings) -> ExamFetchResult:
                         "JW_COOKIE expired; configure JW_USERNAME and JW_PASSWORD as fallback."
                     )
                 _require_njfu_url(page.url)
+                stage = "fill_username"
                 await page.fill("#username", settings.username)
+                stage = "fill_password"
                 await page.fill("#password", settings.password)
+                stage = "submit_login"
                 await page.click('button[type="submit"]')
+                stage = "wait_login"
                 await page.wait_for_load_state("domcontentloaded", timeout=60000)
                 await page.wait_for_timeout(1200)
             _require_njfu_url(page.url)
