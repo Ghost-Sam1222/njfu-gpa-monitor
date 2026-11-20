@@ -22,6 +22,13 @@ class ExamSourceError(RuntimeError):
     pass
 
 
+class ExamStageError(ExamSourceError):
+    def __init__(self, stage: str, reason: str) -> None:
+        self.stage = stage if stage in {"open_login", "login", "open_exam", "discover_projects"} else "browser"
+        self.reason = reason if reason in {"timeout", "browser"} else "browser"
+        super().__init__("Exam query unavailable")
+
+
 class ExamAuthenticationError(ExamSourceError):
     pass
 
@@ -148,9 +155,11 @@ async def _fetch_exams(settings: ExamSettings) -> ExamFetchResult:
             if cookies:
                 await context.add_cookies(cookies)
         page = await context.new_page()
+        stage = "open_login"
         try:
             await page.goto(login_url, wait_until="domcontentloaded", timeout=60000)
             if _is_login_url(page.url):
+                stage = "login"
                 if not settings.username or not settings.password:
                     raise ExamAuthenticationError(
                         "JW_COOKIE expired; configure JW_USERNAME and JW_PASSWORD as fallback."
@@ -167,11 +176,13 @@ async def _fetch_exams(settings: ExamSettings) -> ExamFetchResult:
                     "Login did not complete; verify credentials or interactive verification requirements."
                 )
 
+            stage = "open_exam"
             await page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
             _require_njfu_url(page.url)
             if _is_login_url(page.url):
                 raise ExamAuthenticationError("The NJFU login session expired before the exam query.")
 
+            stage = "discover_projects"
             projects = await _discover_exam_projects(page, settings.semester)
             exams: list[Exam] = []
             failed: list[ExamProject] = []
@@ -204,6 +215,10 @@ async def _fetch_exams(settings: ExamSettings) -> ExamFetchResult:
             return ExamFetchResult(
                 tuple(exams), tuple(projects), tuple(failed), tuple(failure_reasons)
             )
+        except ExamSourceError:
+            raise
+        except Exception as exc:
+            raise ExamStageError(stage, "timeout" if type(exc).__name__ == "TimeoutError" else "browser") from exc
         finally:
             await browser.close()
 
@@ -687,6 +702,9 @@ def _run_cli(argv: list[str] | None = None) -> int:
     except ExamParseError as exc:
         print(f"error: NJFU exam response could not be parsed: {exc}", file=sys.stderr)
         return 4
+    except ExamStageError as exc:
+        print(f"error: NJFU exam query failed (stage={exc.stage}, reason={exc.reason})", file=sys.stderr)
+        return 5
     except ExamSourceError:
         print("error: NJFU exam query failed", file=sys.stderr)
         return 5

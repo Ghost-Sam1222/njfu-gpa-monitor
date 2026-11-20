@@ -295,6 +295,23 @@ class SuggestionTests(unittest.TestCase):
 
 
 class CLITests(unittest.TestCase):
+    def test_diagnostic_reports_stage_without_private_exception_text(self) -> None:
+        import exam_source
+        output = io.StringIO()
+        with patch.dict("os.environ", {"JW_COOKIE": "synthetic-cookie"}, clear=True), patch(
+            "exam_source.fetch_exams", new=AsyncMock(side_effect=exam_source.ExamStageError("open_login", "timeout")),
+        ), redirect_stderr(output):
+            self.assertEqual(_run_cli([]), 5)
+        self.assertIn("open_login", output.getvalue())
+        self.assertIn("timeout", output.getvalue())
+        self.assertNotIn("synthetic-cookie", output.getvalue())
+
+    def test_diagnostic_rejects_untrusted_labels(self) -> None:
+        from exam_source import ExamStageError
+        error = ExamStageError("synthetic-secret", "synthetic-response")
+        self.assertEqual((error.stage, error.reason), ("browser", "browser"))
+        self.assertNotIn("synthetic", str(error))
+
     def test_summary_is_private_safe(self) -> None:
         result = ExamFetchResult((make_exam(course_name="不应出现在摘要"),), (ExamProject("p", "期末考试"),))
         output = io.StringIO()
