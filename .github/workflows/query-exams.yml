@@ -48,6 +48,7 @@ jobs:
           summary="$(python scripts/exam_source.py --semester "$semester" --format summary)"
           status=$?
           set -e
+          echo "$summary"
           {
             echo "### NJFU exam query"
             echo
